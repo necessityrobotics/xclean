@@ -1,0 +1,15 @@
+# Every text file is checked out with LF line ends on every system, so the engine's md5 (the provenance that
+# xclean writes into each run) is the same on Windows and Linux.
+* text=auto eol=lf
+
+# binary files: never converted
+*.npz binary
+*.npy binary
+*.png binary
+*.jpg binary
+*.bin binary
+*.pdf binary
+*.whl binary
+
+# published exactly as fingerprinted (docs/prereg/README.md): its mixed line endings must not be converted
+docs/prereg/** -text

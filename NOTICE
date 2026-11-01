@@ -1,0 +1,18 @@
+xclean - real-time stereo visual-inertial SLAM
+Copyright 2026 Necessity Robotics, India
+
+This product includes xclean, developed by Necessity Robotics (<https://necessityrobotics.github.io>).
+
+The place-recognition vocabulary shipped with xclean (xclean/loop/vocab/xclean_orb_k10L4.npz) is derived from the
+TartanAir dataset: W. Wang, D. Zhu, X. Wang, Y. Hu, Y. Qiu, C. Wang, Y. Hu, A. Kapoor and S. Scherer, "TartanAir: A
+Dataset to Push the Limits of Visual SLAM", IROS 2020, Carnegie Mellon University AirLab
+(<https://theairlab.org/tartanair-dataset/>). TartanAir is licensed under the Creative Commons Attribution 4.0
+International License (CC BY 4.0, <https://creativecommons.org/licenses/by/4.0/>). Changes: the file holds only ORB
+descriptor cluster centres and weights computed from 1,318 TartanAir images, and no image data. TartanAir's authors do
+not endorse xclean. Details: THIRD_PARTY.md.
+
+Licensed under the Apache License, Version 2.0 (the "License"); see the LICENSE file.
+Under section 4(d) of the License, if you distribute xclean or a product that includes it, you must include a
+readable copy of the attribution notices in this file in at least one of these places: a NOTICE file distributed with
+it, its source code or documentation, or a display where your product shows third-party notices (for example an About
+screen).
