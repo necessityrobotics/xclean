@@ -1,0 +1,47 @@
+# xclean runtime environment. Tested on Windows 11 x64 with an NVIDIA driver that supports CUDA 13 (RTX 5090,
+# driver 616.92).
+#   conda env create -f environment.yml
+#   conda activate xclean
+#   pip install -e .
+# Use the Anaconda Prompt, or run "conda init" once before using PowerShell or Command Prompt.
+# Run xclean from the activated environment. Starting the environment's python.exe or Scripts\xclean.exe without
+#   activation also worked in our tests (xclean doctor --full and the GPU kernels): xclean sets its CUDA paths itself.
+# No CUDA Toolkit is needed: this environment carries the CUDA kernel compiler and headers xclean uses (tested with the
+#   CUDA Toolkit of our machine hidden from xclean's processes). If a CUDA Toolkit is installed, xclean still uses this
+#   environment's copy; XCLEAN_KEEP_CUDA_PATH=1 turns that off.
+#
+# What is pinned, and why:
+# - numpy, scipy, numba, llvmlite, opencv-python, cupy-cuda13x, psutil: exact versions, installed with pip from PyPI.
+#   The same builds as our published results (OpenCV: the plain build of the same version, identical results in
+#   our tests). The numpy and scipy wheels carry their own OpenBLAS, the same BLAS and LAPACK as our tests: on a CPU
+#   like ours, CPU results match ours exactly, and the GPU front end, which reproduces this LAPACK's arithmetic bit
+#   for bit, passes its start-up check. The conda-forge builds of numpy and scipy use Intel MKL or a different
+#   OpenBLAS build, whose results differ in the last digits.
+# - cuda-nvrtc 13.3 (conda-forge, selected by cuda-version=13.3): the CUDA kernel compiler, the version of our tests.
+#   The CUDA runtime itself is built into CuPy.
+# - nvidia-cuda-runtime 13.3 (pip): the CUDA header files CuPy compiles its kernels with. Its version must match the
+#   kernel compiler's.
+# - Channels: conda-forge only. "nodefaults" keeps conda from adding the Anaconda defaults channel; a dry-run solve gave
+#   the same 22 conda packages with and without it (all from conda-forge).
+# - OpenBLAS chooses its CPU kernels when it starts. The bit-for-bit match of the GPU front end was verified with the
+#   kernels OpenBLAS uses on CPUs with AVX-512 (tested on one CPU). On other CPUs we expect its start-up check to print
+#   a note (tested by forcing OpenBLAS's other kernels); xclean keeps the GPU front end.
+name: xclean
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - cuda-version=13.3
+  - cuda-nvrtc
+  - pip
+  - pip:
+      - numpy==2.3.5
+      - scipy==1.16.3
+      - numba==0.63.1
+      - llvmlite==0.46.0
+      - opencv-python==5.0.0.93
+      - cupy-cuda13x==13.6.0
+      - nvidia-cuda-runtime==13.3.29
+      - psutil==7.2.2
+      - depthai==3.3.0        # only for live OAK cameras (we tested the OAK-D-Lite)

@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# The Python package (distribution) is xstereo-slam; it installs the import package xclean and the xclean command.
+name = "xstereo-slam"
+version = "0.1.0"
+description = "Real-time stereo visual-inertial SLAM in Python (CuPy + Numba): no C++ build step, no ROS"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY.md"]
+authors = [{ name = "Necessity Robotics" }]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+# Lower bounds, not pins.  The tested set is environment.yml (Python 3.12, numpy 2.3, scipy 1.16, numba 0.63,
+# opencv-python 5.0, cupy 13.6); older versions inside these bounds are untested.  numpy >= 2 matters: numpy 2
+# changed scalar type promotion (NEP 50), which can change float results.
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "numba>=0.60",
+    "psutil>=5.9",
+    "opencv-python>=4.10",
+]
+
+[project.urls]
+Homepage = "https://necessityrobotics.github.io"
+Source = "https://github.com/necessityrobotics/xclean"
+
+[project.optional-dependencies]
+# CuPy is required to run the engine on the GPU, but its wheel name depends on your CUDA version, so it is an extra.
+# With the conda environment.yml, CuPy is already installed with pip from PyPI (the cupy-cuda13x wheel): do NOT add one
+# of these extras there.
+cuda13 = ["cupy-cuda13x>=13.6"]
+cuda12 = ["cupy-cuda12x>=13.6"]
+oak = ["depthai>=3.3"]
+test = ["pytest>=8"]
+
+[project.scripts]
+xclean = "xclean.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["xclean*"]
+exclude = ["xclean.tests*"]
+
+[tool.setuptools.package-data]
+"xclean.loop" = ["vocab/*.npz", "vocab/*.json"]
+"xclean.vio" = ["CONVENTIONS.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
