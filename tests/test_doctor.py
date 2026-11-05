@@ -136,9 +136,11 @@ def test_kernel_source_scan(tmp_path):
 
 # ------------------------------------------------------------------------------------------- driver, GPU, CuPy fakes
 def _fake_cupy(n_dev=1, major=8, minor=9, free_gb=20.0, driver=13040, count_error=None, kernel=45.0,
-               nvrtc=(13, 3)):
+               nvrtc=(13, 3), runtime=None):
     rt = types.SimpleNamespace()
     rt.driverGetVersion = lambda: driver
+    if runtime is not None:                      # the CUDA version CuPy was built for (cupy-cuda12x: 12xxx)
+        rt.runtimeGetVersion = lambda: runtime
 
     def count():
         if count_error:

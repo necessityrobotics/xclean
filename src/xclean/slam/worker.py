@@ -882,7 +882,10 @@ def worker_main(handles, wcfg):
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     try:
         import ctypes
-        ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x00004000)
+        if sys.platform.startswith("win"):
+            ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x00004000)
+        else:
+            os.nice(5)                            # below normal, as on Windows: the engine keeps priority
     except Exception:                                                        # noqa: BLE001
         pass
     import cv2

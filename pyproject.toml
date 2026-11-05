@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # The Python package (distribution) is xstereo-slam; it installs the import package xclean and the xclean command.
 name = "xstereo-slam"
-version = "0.1.0"
+version = "0.2.0"
 description = "Real-time stereo visual-inertial SLAM in Python (CuPy + Numba): no C++ build step, no ROS"
 readme = "README.md"
 license = "Apache-2.0"
@@ -16,6 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Operating System :: POSIX :: Linux",
     "Environment :: GPU :: NVIDIA CUDA",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
@@ -41,8 +42,8 @@ Source = "https://github.com/necessityrobotics/xclean"
 # CuPy is required to run the engine on the GPU, but its wheel name depends on your CUDA version, so it is an extra.
 # With the conda environment.yml, CuPy is already installed with pip from PyPI (the cupy-cuda13x wheel): do NOT add one
 # of these extras there.
-cuda13 = ["cupy-cuda13x>=13.6"]
-cuda12 = ["cupy-cuda12x>=13.6"]
+cuda13 = ["cupy-cuda13x>=13.6,<14"]
+cuda12 = ["cupy-cuda12x>=13.6,<14"]  # CUDA 12, e.g. Jetson Orin on JetPack 6
 oak = ["depthai>=3.3"]
 test = ["pytest>=8"]
 

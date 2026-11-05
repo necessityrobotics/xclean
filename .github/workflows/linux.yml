@@ -1,0 +1,87 @@
+# Linux CI (no GPU): every install route of docs/LINUX_JETSON.md on x86-64 and ARM64, the test suite, and NVRTC builds
+# of every GPU kernel for the supported GPUs (tests/test_kernels_compile.py; XCLEAN_REQUIRE_NVRTC=1 makes a compiler
+# that does not load a failure instead of a skip).  xclean doctor runs for the log only: without a GPU it reports FAILs.
+name: linux
+
+on:
+  push:
+    branches: [main, linux-jetson]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conda:
+    name: "route A: conda environment.yml (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          environment-file: environment.yml
+          activate-environment: xclean
+          conda-remove-defaults: "true"
+      - name: Install xclean
+        run: pip install -e . pytest
+      - name: xclean doctor (log only)
+        run: |
+          xclean --help > /dev/null
+          xclean doctor || true
+      - name: Tests
+        env:
+          XCLEAN_REQUIRE_NVRTC: "1"
+        run: pytest -q -rs
+
+  jetpack-like:
+    name: "route B: venv + CUDA ${{ matrix.cuda }} toolkit (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+        cuda: ["12-6", "13-0"]
+        include:
+          - cuda: "12-6"
+            python: "3.10"
+            extra: cuda12
+          - cuda: "13-0"
+            python: "3.12"
+            extra: cuda13
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: CUDA kernel compiler and headers from NVIDIA's apt repository (as JetPack puts them in /usr/local/cuda)
+        run: |
+          arch=x86_64; [ "$(uname -m)" = "aarch64" ] && arch=sbsa
+          wget -q "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${arch}/cuda-keyring_1.1-1_all.deb"
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -q
+          sudo apt-get install -y -q "cuda-nvrtc-dev-${{ matrix.cuda }}" "cuda-cudart-dev-${{ matrix.cuda }}"
+          v="$(echo '${{ matrix.cuda }}' | tr - .)"
+          echo "CUDA_PATH=/usr/local/cuda-${v}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/cuda-${v}/lib64" >> "$GITHUB_ENV"
+      - name: Install xclean
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[${{ matrix.extra }}]" pytest
+      - name: xclean doctor (log only)
+        run: |
+          xclean --help > /dev/null
+          xclean doctor || true
+      - name: Tests
+        env:
+          XCLEAN_REQUIRE_NVRTC: "1"
+        run: pytest -q -rs

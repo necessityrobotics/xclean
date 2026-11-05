@@ -1,5 +1,7 @@
 # xclean runtime environment. Tested on Windows 11 x64 with an NVIDIA driver that supports CUDA 13 (RTX 5090,
 # driver 616.92).
+# The same file installs on Linux x86-64 and ARM64 (0.2.0; tested in CI without a GPU, not on Linux GPU hardware):
+#   see docs/LINUX_JETSON.md, which also covers NVIDIA Jetson.
 #   conda env create -f environment.yml
 #   conda activate xclean
 #   pip install -e .

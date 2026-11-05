@@ -7,7 +7,8 @@
 Each check prints OK, WARN or FAIL, and a one-line fix for WARN / FAIL.  The exit code is 0 when nothing FAILs, else 1.
 Checks: the Python version; numpy / scipy / numba / llvmlite / opencv / psutil against the tested versions; which
 LAPACK SciPy uses (and its CPU kernel) and which BLAS NumPy uses; the text encoding GPU kernels are written in; the
-NVIDIA driver and its CUDA version; the GPU (name, compute capability, free memory); CuPy (import, packaging, CUDA
+platform (Windows / Linux, CPU architecture, NVIDIA Jetson model and L4T release); the NVIDIA driver and its CUDA
+version; the GPU (name, compute capability, free memory); CuPy (import, packaging, CUDA
 path, the CUDA kernel compiler NVRTC: version and where it was loaded from, the CUDA headers it compiles with, a small
 GPU kernel, and the folders its CUDA libraries were loaded from); whether a system CUDA Toolkit is visible and whether
 this environment is self-contained; with --full, the GPU front end's start-up self-check; depthai and connected OAK
@@ -37,6 +38,8 @@ MIN_PYTHON = (3, 10)
 TESTED_NVRTC = (13, 3)               # the CUDA kernel compiler of the published results (environment.yml: cuda-nvrtc)
 MIN_DRIVER_CUDA = (13, 0)            # CuPy for CUDA 13 needs a driver for CUDA 13.0 or newer
 MIN_CC = (7, 5)                      # CUDA 13 supports compute capability 7.5 (Turing) and newer
+MIN_CC_CUDA12 = (5, 0)               # CUDA 12 (cupy-cuda12x, e.g. Jetson Orin on JetPack 6) supports 5.0 and newer
+LINUX_DOC = "docs/LINUX_JETSON.md"
 MIN_FREE_VRAM_GB = 2.0               # the engine's GPU memory budget, context included
 MATCHED_OPENBLAS_CORE = "skylakex"   # the OpenBLAS CPU kernel the GPU front end's 3x3 solver matches bit for bit
 FIX_ENV = "recreate the environment from environment.yml (conda env remove -n xclean, then conda env create -f " \
@@ -145,7 +148,68 @@ def version_check(label, have, tested, minimum, fix):
     return Check(OK, label, "%s%s" % (have, " (tested)" if tested else ""))
 
 
+def _read_text(path, limit=4096):
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit).decode("utf-8", "replace").replace("\x00", "").strip()
+    except Exception:
+        return ""
+
+
+def jetson_info(root="/"):
+    """NVIDIA Jetson board: -> {"model": ..., "l4t": "R36.4.3"} from the device tree and /etc/nv_tegra_release, or
+    None on anything else."""
+    model = _read_text(os.path.join(root, "proc", "device-tree", "model"))
+    rel = _read_text(os.path.join(root, "etc", "nv_tegra_release"))
+    if not rel and "jetson" not in model.lower() and "thor" not in model.lower():
+        return None
+    l4t = ""
+    if rel:                                       # "# R36 (release), REVISION: 4.3, GCID: ..."
+        head = rel.splitlines()[0]
+        major = head.split("(")[0].replace("#", "").strip()
+        rev = head.split("REVISION:")[1].split(",")[0].strip() if "REVISION:" in head else ""
+        l4t = "%s.%s" % (major, rev) if rev else major
+    return {"model": model or "NVIDIA Jetson", "l4t": l4t}
+
+
+def _cupy_cuda_major(cp):
+    """The CUDA major version CuPy was built for (13: cupy-cuda13x, 12: cupy-cuda12x); 13 when it cannot be read."""
+    try:
+        return int(cp.cuda.runtime.runtimeGetVersion()) // 1000
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(os.path.dirname(cp.__file__), ".data", "_wheel.json"), encoding="utf-8") as f:
+            return int(str((json.load(f) or {}).get("cuda", "13")).split(".")[0])
+    except Exception:
+        return 13
+
+
+def _driver_fix(major):
+    return ("install an NVIDIA driver that supports CUDA %d (desktop: R580 or newer for CUDA 13; Jetson: JetPack 7.2 "
+            "or newer for CUDA 13, or JetPack 6 with cupy-cuda12x; see %s)" % (major, LINUX_DOC))
+
+
 # ------------------------------------------------------------------------------------------------------------- checks
+def check_platform(system=None, machine=None, root="/"):
+    """Where xclean runs.  Windows 11 x64 is the tested platform; Linux (x86-64, ARM64, NVIDIA Jetson) is supported
+    from 0.2.0 but not tested by the authors on hardware; anything else has no CUDA."""
+    import platform as _platform
+    system = system or _platform.system()
+    machine = machine or _platform.machine()
+    if system == "Windows":
+        return [Check(OK, "Platform", "Windows %s, %s (the tested platform)" % (_platform.release(), machine))]
+    if system == "Linux":
+        j = jetson_info(root)
+        where = "Linux %s" % machine
+        if j:
+            where += ", %s%s" % (j["model"], (", L4T %s" % j["l4t"]) if j["l4t"] else "")
+        return [Check(OK, "Platform", where + " (supported; the authors tested Windows 11 x64 only; see %s)"
+                      % LINUX_DOC)]
+    return [Check(FAIL, "Platform", "%s %s: xclean needs an NVIDIA GPU with CUDA (Windows or Linux)"
+                  % (system, machine), "use a Windows or Linux machine with an NVIDIA GPU")]
+
+
 def check_python(vi=None):
     vi = tuple(vi or sys.version_info[:3])
     s = ".".join(str(x) for x in vi)
@@ -288,7 +352,7 @@ def check_encoding(utf8_mode=None, encoding=None):
                   "(CuPy writes kernel sources in this encoding, and those in %s contain non-ASCII characters)"
                   % (enc, ", ".join(bad)),
                   "set PYTHONUTF8=1 in this shell before running xclean (cmd: set PYTHONUTF8=1; PowerShell: "
-                  "$env:PYTHONUTF8=1)")]
+                  "$env:PYTHONUTF8=1; bash: export PYTHONUTF8=1)")]
 
 
 def _cupy():
@@ -308,15 +372,16 @@ def check_driver(cp=None):
             cuda_v = (v // 1000, (v % 1000) // 10)
         except Exception:
             cuda_v = None
+    major = _cupy_cuda_major(cp) if cp is not None else MIN_DRIVER_CUDA[0]
     if drv is None and cuda_v is None:
         return [Check(FAIL, "NVIDIA driver", "no NVIDIA driver found (nvidia-smi and the CUDA driver API are missing)",
-                      "install the NVIDIA driver for your GPU (one that supports CUDA 13, R580 or newer)")]
-    detail = "driver %s" % (drv or "unknown")
+                      _driver_fix(major))]
+    detail = "driver %s" % (drv or ("unknown" if jetson_info() is None else "of the Jetson BSP (no nvidia-smi)"))
     if cuda_v is not None:
         detail += ", CUDA driver API %d.%d" % cuda_v
-        if cuda_v < MIN_DRIVER_CUDA:
-            return [Check(FAIL, "NVIDIA driver", detail + " (CUDA 13.0 or newer is needed)",
-                          "update the NVIDIA driver (R580 or newer supports CUDA 13)")]
+        if cuda_v < (major, 0):
+            return [Check(FAIL, "NVIDIA driver", detail + " (CuPy for CUDA %d needs a driver for CUDA %d.0 or newer)"
+                          % (major, major), _driver_fix(major))]
         return [Check(OK, "NVIDIA driver", detail)]
     return [Check(WARN, "NVIDIA driver", detail + " (CUDA version not read: CuPy did not load)",
                   "fix CuPy first (see the CuPy line)")]
@@ -358,9 +423,12 @@ def check_gpu(cp=None, cp_err=None):
     detail = "%s, compute capability %d.%d, %.1f GB" % (name, cc[0], cc[1], total)
     if n > 1:
         detail += " (device 0 of %d is used)" % n
-    if cc < MIN_CC:
-        out.append(Check(FAIL, "GPU", detail + ": CUDA 13 needs compute capability 7.5 or newer",
-                         "a Turing (RTX 20-series) or newer NVIDIA GPU is needed"))
+    major = _cupy_cuda_major(cp)
+    min_cc = MIN_CC if major >= 13 else MIN_CC_CUDA12
+    if cc < min_cc:
+        out.append(Check(FAIL, "GPU", detail + ": CUDA %d needs compute capability %d.%d or newer"
+                         % (major, min_cc[0], min_cc[1]),
+                         "a Turing (RTX 20-series), Jetson Orin, Jetson Thor or newer NVIDIA GPU is needed"))
     else:
         out.append(Check(OK, "GPU", detail))
     if free is None:
@@ -512,10 +580,17 @@ def check_toolkit(facts, note=None, gpu_ok=True):
         sys_tk.append("CUDA_PATH=%s" % before)
     if nvcc and not _inside(nvcc, sys.prefix):
         sys_tk.append("nvcc at %s" % nvcc)
-    env_nvrtc = os.path.isfile(os.path.join(sys.prefix, "Library", "bin", "nvrtc64_130_0.dll"))
+    if sys.platform.startswith("win"):
+        env_nvrtc = os.path.isfile(os.path.join(sys.prefix, "Library", "bin", "nvrtc64_130_0.dll"))
+        how = "points CUDA_PATH at this environment and puts its Library\\bin first on PATH"
+    else:
+        try:
+            env_nvrtc = _import("xclean")._env_nvrtc_so(sys.prefix) is not None
+        except Exception:
+            env_nvrtc = False
+        how = "points CUDA_PATH at this environment and loads its own CUDA compiler"
     if note.get("set_to"):
-        used = "not used: xclean points CUDA_PATH at this environment and puts its Library\\bin first on PATH, in " \
-               "xclean's own processes only"
+        used = "not used: xclean %s, in xclean's own processes only" % how
     elif sys_tk:
         used = "used by CuPy: %s" % (note.get("why") or "this environment has no CUDA compiler of its own")
     else:
@@ -532,7 +607,8 @@ def check_toolkit(facts, note=None, gpu_ok=True):
     hdr_out = [d for d, _o in hdrs[:1] if not _inside(d, sys.prefix)]
     if not nvrtc_paths and not hdrs and facts.get("nvrtc") is None:
         out.append(Check(FAIL, "Self-contained", "no CUDA kernel compiler (NVRTC) and no CUDA headers found",
-                         FIX_ENV + " (it brings both), or install a CUDA 13 Toolkit"))
+                         FIX_ENV + " (it brings both), or install a CUDA Toolkit of CuPy's CUDA version (Jetson: "
+                         "sudo apt install nvidia-jetpack)"))
         return out
     if facts.get("nvrtc") is not None and not nvrtc_paths:
         out.append(Check(OK, "Self-contained", "not determined: the loaded libraries could not be listed"))
@@ -600,11 +676,14 @@ def check_oak():
             devs = list(dai.Device.getAllConnectedDevices())
     except Exception as e:
         out.append(Check(WARN, "OAK camera", "device search failed (%s: %s)" % (type(e).__name__, e),
-                         "reconnect the camera; on Windows check it in Device Manager"))
+                         "reconnect the camera; on Windows check it in Device Manager; on Linux install the "
+                         "Luxonis udev rule (%s)" % LINUX_DOC))
         return out
     if not devs:
         out.append(Check(WARN, "OAK camera", "none found (needed only for xclean live)",
-                         "connect the camera to a USB 3 port (blue) with a data cable"))
+                         "connect the camera to a USB 3 port (blue) with a data cable%s"
+                         % ("" if sys.platform.startswith("win") else "; on Linux install the Luxonis udev rule (%s)"
+                            % LINUX_DOC)))
         return out
     desc = []
     for d in devs:
@@ -660,6 +739,7 @@ def run_checks(full=False, out_dir=None, size=(640, 400)):
             return [Check(FAIL, name, "the check itself failed (%s: %s)" % (type(e).__name__, e),
                           "report this with the output of xclean doctor --json")]
 
+    res += safe("Platform", check_platform)
     res += safe("Python", check_python)
     res += safe("Packages", check_packages)
     res += safe("LAPACK (SciPy)", check_blas)
