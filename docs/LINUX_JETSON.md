@@ -12,8 +12,10 @@ developer kit, T5000, T4000).
 - **Not tested:** we have not run xclean on a Linux GPU or on a Jetson. Our published results and timings come from
   one Windows 11 PC (Ryzen 9 9950X, RTX 5090). Accuracy and speed on your machine are yours to measure; a Jetson is
   much slower than that PC, so expect higher latency there.
-- Results differ from ours in the last digits on other CPUs (see "Start-up self-check" in the README); on ARM64 the
-  self-check prints a note and xclean keeps the GPU front end.
+- Results differ from ours in the last digits on other CPUs. At the start of every run, the GPU front end checks that
+  it computes what the CPU code computes (see "Start-up self-check" in the README). If only its 3x3 solver differs,
+  xclean prints a note and keeps the GPU front end; if anything else differs, it uses the slower CPU front end for the
+  whole run. We do not know yet which of the two happens on ARM64: `xclean doctor --full` shows it on your machine.
 
 If something fails, open an issue at <https://github.com/necessityrobotics/xclean/issues> with the output of
 `xclean doctor --json`.
