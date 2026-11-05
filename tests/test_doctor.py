@@ -274,9 +274,11 @@ def test_toolkit_and_self_contained(monkeypatch, tmp_path):
                                                    "why": "this environment has no CUDA kernel compiler of its own"}),
                    "Self-contained")
     assert plain.status == D.OK and "no:" in plain.detail
-    # the environment has its compiler but CuPy was imported before xclean
+    # the environment has its compiler (Windows and Linux layouts) but CuPy was imported before xclean
     (env / "Library" / "bin").mkdir(parents=True)
     (env / "Library" / "bin" / "nvrtc64_130_0.dll").write_bytes(b"")
+    (env / "lib").mkdir(parents=True)
+    (env / "lib" / "libnvrtc.so.13").write_bytes(b"")
     early = _named(D.check_toolkit(toolkit_facts, {"before": str(tk), "set_to": None,
                                                    "why": "CuPy was already imported before xclean"}),
                    "Self-contained")
