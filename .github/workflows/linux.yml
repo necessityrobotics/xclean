@@ -1,6 +1,7 @@
 # Linux CI (no GPU): every install route of docs/LINUX_JETSON.md on x86-64 and ARM64, the test suite, and NVRTC builds
 # of every GPU kernel for the supported GPUs (tests/test_kernels_compile.py; XCLEAN_REQUIRE_NVRTC=1 makes a compiler
 # that does not load a failure instead of a skip).  xclean doctor runs for the log only: without a GPU it reports FAILs.
+# The doctor output and the pytest summary are also posted as annotations, which anyone can read without signing in.
 name: linux
 
 on:
@@ -34,14 +35,12 @@ jobs:
           conda-remove-defaults: "true"
       - name: Install xclean
         run: pip install -e . pytest
-      - name: xclean doctor (log only, also as a public annotation)
+      - name: xclean doctor (log only)
         run: |
           xclean --help > /dev/null
           xclean doctor > doctor.log 2>&1 || true
           cat doctor.log
-          m="$(head -c 20000 doctor.log)"; m="${m//'%'/'%25'}"; m="${m//$''/'%0D'}"; m="${m//$'
-'/'%0A'}"
-          echo "::notice title=xclean doctor (${{ matrix.os }})::${m}"
+          python .github/annotate.py notice "xclean doctor (${{ matrix.os }})" doctor.log
       - name: Tests
         env:
           XCLEAN_REQUIRE_NVRTC: "1"
@@ -50,10 +49,7 @@ jobs:
           pytest -q -rfEs --tb=short -p no:faulthandler > pytest.log 2>&1
           rc=$?
           cat pytest.log
-          m="$( { sed -n '/short test summary info/,$p' pytest.log; grep -E '^E  ' pytest.log | head -n 80; } | head -c 40000 )"
-          m="${m//'%'/'%25'}"; m="${m//$''/'%0D'}"; m="${m//$'
-'/'%0A'}"
-          if [ "$rc" -ne 0 ]; then echo "::error title=pytest (${{ matrix.os }})::${m}"; else echo "::notice title=pytest (${{ matrix.os }})::$(tail -n 1 pytest.log)"; fi
+          python .github/annotate.py pytest "pytest (${{ matrix.os }})" pytest.log "$rc"
           exit "$rc"
 
   jetpack-like:
@@ -90,14 +86,12 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -e ".[${{ matrix.extra }}]" pytest
-      - name: xclean doctor (log only, also as a public annotation)
+      - name: xclean doctor (log only)
         run: |
           xclean --help > /dev/null
           xclean doctor > doctor.log 2>&1 || true
           cat doctor.log
-          m="$(head -c 20000 doctor.log)"; m="${m//'%'/'%25'}"; m="${m//$''/'%0D'}"; m="${m//$'
-'/'%0A'}"
-          echo "::notice title=xclean doctor (${{ matrix.os }})::${m}"
+          python .github/annotate.py notice "xclean doctor (${{ matrix.os }}, CUDA ${{ matrix.cuda }})" doctor.log
       - name: Tests
         env:
           XCLEAN_REQUIRE_NVRTC: "1"
@@ -106,8 +100,5 @@ jobs:
           pytest -q -rfEs --tb=short -p no:faulthandler > pytest.log 2>&1
           rc=$?
           cat pytest.log
-          m="$( { sed -n '/short test summary info/,$p' pytest.log; grep -E '^E  ' pytest.log | head -n 80; } | head -c 40000 )"
-          m="${m//'%'/'%25'}"; m="${m//$''/'%0D'}"; m="${m//$'
-'/'%0A'}"
-          if [ "$rc" -ne 0 ]; then echo "::error title=pytest (${{ matrix.os }})::${m}"; else echo "::notice title=pytest (${{ matrix.os }})::$(tail -n 1 pytest.log)"; fi
+          python .github/annotate.py pytest "pytest (${{ matrix.os }}, CUDA ${{ matrix.cuda }})" pytest.log "$rc"
           exit "$rc"
