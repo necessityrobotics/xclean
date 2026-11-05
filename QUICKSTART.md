@@ -3,6 +3,9 @@
 The first steps with xclean on a Windows 11 PC with an NVIDIA GPU: install, check the machine, convert one public
 sequence, run it, read the score. Then the paced mode and the live OAK camera.
 
+On Linux or an NVIDIA Jetson, install with [docs/LINUX_JETSON.md](docs/LINUX_JETSON.md); the `xclean` commands below
+are the same, with Linux paths (for example `~/data` for `C:\data`) and `unzip` in place of `tar.exe`.
+
 Run every command in the repository folder, in a terminal where conda works, and from step 2 on with the environment
 activated. The Anaconda Prompt, which Miniconda and Anaconda install, works as it is. For PowerShell or Command
 Prompt, run `conda init` once and open a new terminal; if PowerShell then says that running scripts is disabled, use

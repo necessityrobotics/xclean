@@ -663,7 +663,7 @@ def main():
               "eos_forced_by_demo": eos_forced, "source_validity": feeder.get("validity"), "affinity": affinity,
               "other_gpu_compute_apps_at_start": others_gpu,
               "other_gpu_compute_apps_not_allowed": [x for x in others_gpu
-                                                     if x[1].split(chr(92))[-1].lower() not in H.ALLOW],
+                                                     if not H.gpu_app_allowed(x[1])],
               "others_over_5pct_core": mon.others_over, "allow_list_cpu_pct_max": mon.allow_cpu,
               "allow_list_total_cpu_pct_max": mon.allow_sum_max, "fence_errors": esum.get("n_fence_errors")}
     if nfb:

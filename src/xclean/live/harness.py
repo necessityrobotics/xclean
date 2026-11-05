@@ -48,6 +48,31 @@ ALLOW = ("system", "msmpeng.exe", "claude.exe", "wallpaper64.exe", "wallpaper32.
          "taskmgr.exe",                     # the user's Task Manager
          "magnify.exe", "chrome.exe",       # Windows Magnifier + the user's browser
          "powertoys.colorpickerui.exe")     # PowerToys desktop UI (a D3D client listed by nvidia-smi)
+# Linux (0.2.0): the same exemption for the usual system, desktop and NVIDIA Jetson service processes; kernel threads
+# and service families by prefix
+ALLOW_LINUX = ("systemd", "init", "dbus-daemon", "dbus-broker", "xorg", "xwayland", "gnome-shell",
+               "gnome-terminal-server", "gnome-system-monitor", "nautilus", "kwin_x11", "kwin_wayland", "plasmashell",
+               "xfwm4", "xfce4-panel", "lxqt-panel", "pipewire", "pipewire-pulse", "wireplumber", "pulseaudio",
+               "networkmanager", "wpa_supplicant", "sshd", "rsyslogd", "cron", "irqbalance", "snapd", "packagekitd",
+               "polkitd", "udisksd", "upowerd", "accounts-daemon", "avahi-daemon", "cupsd", "thermald",
+               "tracker-miner-fs-3", "firefox", "chrome", "chromium", "code", "top", "htop", "btop", "bash", "zsh",
+               "sh", "tmux: server", "screen", "sudo", "nvidia-persistenced", "nv-hostengine",
+               "nvargus-daemon", "nvpmodel", "tegrastats", "jtop", "nvphsd", "nvfancontrol", "nvgetty",
+               "nvs-service", "nvzramconfig", "nvmemwarning", "jetson_clocks")
+ALLOW_PREFIX = ("kworker/", "ksoftirqd/", "migration/", "rcu_", "irq/", "cpuhp/", "idle_inject/", "jbd2/", "kswapd",
+                "watchdog", "kcompactd", "khugepaged", "kthreadd", "systemd-", "gsd-")
+ALLOW = ALLOW + ALLOW_LINUX
+
+
+def allowed(name):
+    """True for a process exempt from the per-process 5 % bar (it is still reported per run)."""
+    n = (name or "").lower()
+    return n in ALLOW or (not sys.platform.startswith("win") and n.startswith(ALLOW_PREFIX))
+
+
+def gpu_app_allowed(path):
+    """The same rule for a GPU process as nvidia-smi names it (a full path on Windows and Linux)."""
+    return allowed(os.path.basename(str(path).replace(chr(92), "/")))
 
 
 def vram_used_mb():
@@ -180,7 +205,7 @@ class Monitor(threading.Thread):
                     try:
                         c = q.cpu_percent(None)
                         name = q.name()
-                        if name.lower() in ALLOW:
+                        if allowed(name):
                             allow_sum += c
                             self.allow_cpu[name] = max(self.allow_cpu.get(name, 0.0), c)
                         elif c > 5.0:
@@ -216,9 +241,40 @@ def _user_data_dir():
 WITNESS_REF_V2 = os.environ.get("XCLEAN_WITNESS_REF_V2") or os.path.join(_user_data_dir(), "timing_references.json")
 
 
+def linux_core_groups(sys_cpu="/sys/devices/system/cpu"):
+    """Linux: logical CPUs per physical core from sysfs (topology/thread_siblings_list of each online CPU), in order of
+    the first sibling; [] when sysfs does not give them.  On Linux the SMT siblings of a core are usually NOT
+    consecutive numbers (e.g. 0 and 16), so the consecutive-group fallback would be wrong there."""
+    import glob as _glob
+    groups = {}
+    for p in _glob.glob(os.path.join(sys_cpu, "cpu[0-9]*", "topology", "thread_siblings_list")):
+        try:
+            with open(p) as f:
+                txt = f.read().strip()
+        except OSError:
+            continue
+        cpus = []
+        for part in txt.split(","):
+            if "-" in part:
+                a, b = part.split("-")
+                cpus.extend(range(int(a), int(b) + 1))
+            elif part.strip():
+                cpus.append(int(part))
+        if cpus:
+            groups[tuple(sorted(cpus))] = sorted(cpus)
+    return sorted(groups.values(), key=lambda g: g[0])
+
+
 def core_groups():
-    """Logical CPUs per PHYSICAL core, from the OS (GetLogicalProcessorInformation, RelationProcessorCore); fallback
-    (non-Windows): consecutive groups.  -> list of lists, index = physical core."""
+    """Logical CPUs per PHYSICAL core, from the OS (Windows: GetLogicalProcessorInformation, RelationProcessorCore;
+    Linux: sysfs); fallback: consecutive groups.  -> list of lists, index = physical core."""
+    if sys.platform.startswith("linux"):
+        try:
+            g = linux_core_groups()
+            if g:
+                return g
+        except Exception:
+            pass
     try:
         import ctypes
         import ctypes.wintypes as w
@@ -305,7 +361,7 @@ def plain_validity_note(mode, checks, witness, reasons):
         elif r.startswith("non-allowed GPU apps"):
             gpu = checks.get("other_gpu_compute_apps_not_allowed") or []
             plain.append("other programs use the GPU (%s)"
-                         % ", ".join(sorted({str(x[1]).split(chr(92))[-1] for x in gpu})))
+                         % ", ".join(sorted({os.path.basename(str(x[1]).replace(chr(92), "/")) for x in gpu})))
         elif r.startswith("non-allow-listed load"):
             load = checks.get("others_over_5pct_core") or {}
             plain.append("other programs used the CPU (%s)" % ", ".join(sorted({k.split("(")[0] for k in load})))
@@ -655,7 +711,7 @@ def main():
            "vram_delta_mb": (mon.peak_vram - vram_base) if vram_base is not None else None,
            "vram_base_mb": vram_base, "cpu_cores_max_10s": max(cpuw) if cpuw else None,
            "cpu_cores_mean": (sum(cpuw) / len(cpuw)) if cpuw else None, "cpu_windows": len(cpuw)}
-    gpu_bad = [x for x in others_gpu if x[1].split(chr(92))[-1].lower() not in ALLOW]
+    gpu_bad = [x for x in others_gpu if not gpu_app_allowed(x[1])]
     checks = {
         "protocol": "v2",
         "exit_codes": {"engine": eng.exitcode, "feeder": fed.exitcode, "recorder": rec.exitcode,

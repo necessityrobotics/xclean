@@ -2,6 +2,8 @@
 
 Real-time stereo visual-inertial SLAM, built in India. Python, with GPU code written in CuPy and CPU code compiled
 with Numba: no C++ build step, no ROS. Runs natively on Windows 11 and live on a Luxonis OAK-D-Lite stereo camera.
+From 0.2.0 it also installs on Linux (x86-64 and ARM64), including NVIDIA Jetson Orin and Jetson Thor robot computers:
+see [docs/LINUX_JETSON.md](docs/LINUX_JETSON.md). We have not run it on Linux or Jetson hardware ourselves.
 
 ## What it does
 - On the GPU: feature detection, ORB descriptors, stereo matching, and the first feature-matching step of each frame.
@@ -45,14 +47,21 @@ Every route, every loss and every disclosure: <https://necessityrobotics.github.
 was done: <https://necessityrobotics.github.io/paper.html>.
 
 ## Requirements
-- Windows 11, 64-bit. Linux and macOS are not tested.
-- An NVIDIA GPU and a driver that supports CUDA 13 (R580 or newer). We tested an RTX 5090 with driver 616.92.
-  `xclean doctor` checks the driver and the GPU (compute capability 7.5 or newer), and warns when less than 2 GB of
-  GPU memory is free.
-- conda (Miniconda or Anaconda), and git to get the code.
+- Windows 11, 64-bit (tested), or Linux on x86-64 or ARM64, including NVIDIA Jetson Orin (JetPack 6 or 7.2) and
+  Jetson Thor (JetPack 7). Linux and Jetson are supported from 0.2.0 but not tested by us on hardware: see
+  [docs/LINUX_JETSON.md](docs/LINUX_JETSON.md). macOS has no CUDA and cannot run xclean.
+- An NVIDIA GPU and a driver that supports CUDA 13 (R580 or newer; on Jetson, JetPack 7). Jetson Orin on JetPack 6
+  (CUDA 12.6) works with CuPy for CUDA 12 instead. We tested an RTX 5090 with driver 616.92. `xclean doctor` checks
+  the driver and the GPU (compute capability 7.5 or newer with CUDA 13), and warns when less than 2 GB of GPU memory
+  is free.
+- conda (Miniconda, Anaconda or Miniforge), and git to get the code. On Jetson, a Python venv on top of JetPack works
+  too.
 - For live use: a Luxonis OAK-D-Lite (the only camera we tested).
 
 ## Install
+
+These steps are for Windows. For Linux and NVIDIA Jetson, follow [docs/LINUX_JETSON.md](docs/LINUX_JETSON.md).
+
 
 Use the Anaconda Prompt, which Miniconda and Anaconda install. To use PowerShell or Command Prompt instead, run
 `conda init` once and open a new terminal; if PowerShell then says that running scripts is disabled, use the Anaconda
@@ -167,7 +176,10 @@ CPU front end, bit for bit.
 
 ## Known limits
 - Tested on one machine: AMD Ryzen 9 9950X, NVIDIA RTX 5090, Windows 11. Other CPUs, GPUs and drivers are not tested.
-- Windows only. Linux is not tested.
+- Linux and NVIDIA Jetson (0.2.0): installed and tested in CI on GitHub's Linux machines (x86-64 and ARM64, no GPU):
+  the test suite passes and every GPU kernel compiles for the supported GPUs, including Jetson Orin (sm_87) and Jetson
+  Thor (sm_110). No xclean run on a Linux or Jetson GPU has been made by us, so accuracy and speed there are
+  unmeasured. Reports are welcome (open an issue with the output of `xclean doctor --json`).
 - The robustness test of our final evaluation did not pass in full, and most of our pre-registered claims did not
   pass (see Results).
 - Datasets keep their own licences. KITTI and 4Seasons are non-commercial, and the EuRoC record is marked
