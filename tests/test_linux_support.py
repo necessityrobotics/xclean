@@ -85,6 +85,25 @@ def test_compute_capability_rule_follows_cupy(monkeypatch):
     assert _status(D.check_gpu(_cupy(runtime=12060, major=7, minor=2)), "GPU") == [D.OK]     # Xavier, CUDA 12
 
 
+def test_cuda_libraries_with_linux_names(monkeypatch):
+    maps = ["/v/lib/python3.10/site-packages/cupy_backends/cuda/libs/nvrtc.cpython-310-aarch64-linux-gnu.so",
+            "/usr/local/cuda-12.6/targets/sbsa-linux/lib/libnvrtc.so.12.6.85",
+            "/usr/local/cuda-12.6/targets/sbsa-linux/lib/libnvrtc-builtins.so.12.6.85",
+            "/usr/lib/aarch64-linux-gnu/nvidia/libcuda.so.1.1",
+            "/env/Library/bin/nvrtc64_130_0.dll",
+            "/env/Lib/site-packages/cupy_backends/cuda/libs/nvrtc.cp312-win_amd64.pyd"]
+    monkeypatch.setattr(D, "_loaded_modules", lambda: maps)
+    got = D._cuda_libs()
+    assert got["nvrtc"] == [maps[1], maps[4]]                # never CuPy's own Python modules
+    assert got["nvrtc-builtins"] == [maps[2]] and got["nvcuda"] == [maps[3]]
+
+
+def test_no_driver_installed(monkeypatch):
+    monkeypatch.setattr(D, "_nvidia_smi", lambda q: None)
+    c = D.check_driver(_cupy(runtime=13000, driver=0))[0]
+    assert c.status == D.FAIL and "no NVIDIA driver found" in c.detail
+
+
 # ------------------------------------------------------------------------------------------- Linux CPU topology (sysfs)
 def _sysfs(tmp_path, siblings):
     for cpu, txt in siblings.items():
