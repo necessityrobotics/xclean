@@ -12,8 +12,12 @@ def esc(s):
     return s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
+def esc_prop(s):
+    return esc(s).replace(":", "%3A").replace(",", "%2C")
+
+
 def main():
-    kind, title, path = sys.argv[1], sys.argv[2], sys.argv[3]
+    kind, title, path = sys.argv[1], esc_prop(sys.argv[2]), sys.argv[3]
     text = open(path, encoding="utf-8", errors="replace").read()
     if kind == "notice":
         print("::notice title=%s::%s" % (title, esc(text[:20000])))
