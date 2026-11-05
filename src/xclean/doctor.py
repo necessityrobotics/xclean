@@ -44,6 +44,8 @@ MIN_FREE_VRAM_GB = 2.0               # the engine's GPU memory budget, context i
 MATCHED_OPENBLAS_CORE = "skylakex"   # the OpenBLAS CPU kernel the GPU front end's 3x3 solver matches bit for bit
 FIX_ENV = "recreate the environment from environment.yml (conda env remove -n xclean, then conda env create -f " \
           "environment.yml)"
+if not sys.platform.startswith("win"):
+    FIX_ENV += "; a Jetson venv takes its versions from pip and JetPack (docs/LINUX_JETSON.md)"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -369,7 +371,7 @@ def check_driver(cp=None):
     if cp is not None:
         try:
             v = int(cp.cuda.runtime.driverGetVersion())
-            cuda_v = (v // 1000, (v % 1000) // 10)
+            cuda_v = (v // 1000, (v % 1000) // 10) if v > 0 else None      # 0: no driver installed
         except Exception:
             cuda_v = None
     major = _cupy_cuda_major(cp) if cp is not None else MIN_DRIVER_CUDA[0]
@@ -490,6 +492,12 @@ def _cuda_libs():
     loaded = {}
     for path in _loaded_modules():
         b = os.path.basename(path).lower()
+        if ".cpython-" in b or b.endswith(".pyd"):
+            continue                               # CuPy's own Python modules (e.g. nvrtc.cpython-312-*.so)
+        if b.startswith("lib") and ".so" in b:     # Linux names: libnvrtc.so.13, libcudart.so.12, libcuda.so.1
+            b = b[3:]
+            if b.startswith("cuda.so"):
+                b = "nvcuda" + b[4:]               # the driver library, as nvcuda.dll on Windows
         for key in ("nvrtc-builtins", "nvrtc", "cudart", "nvcuda", "cublas", "cusolver", "nvjitlink"):
             if b.startswith(key) and (b.endswith((".dll", ".so")) or ".so." in b):
                 loaded.setdefault(key, []).append(path)
