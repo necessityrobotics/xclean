@@ -4,12 +4,13 @@
 
     xclean run     <sequence dir> [...]   offline runner                         = python -m xclean.run
     xclean replay  <sequence dir> [...]   the live engine on a recorded sequence = python -m xclean.live.harness
-    xclean live    --out DIR [...]        live on an OAK-D-Lite camera           = python -m xclean.live.oak_demo
+    xclean live    --out DIR [...]        live on a stereo camera (OAK-D-Lite,   = python -m xclean.live.oak_demo
+                                          or any rig through --source)
     xclean score   <run dir | csv> [...]  score a trajectory against GT          = python -m xclean.eval.score
     xclean audit   <sequence dir> [...]   check sequence folders before a run    = python -m xclean.eval.dataset_audit
     xclean convert <format> <in> <out>    a public dataset -> a sequence folder  = python -m xclean.io.convert
     xclean calib   <kalibr|opencv> [...]  calib.json for your own camera         = python -m xclean.io.calib_import
-    xclean doctor  [--full]               check this machine                     = python -m xclean.doctor
+    xclean doctor  [--full] [--source]    check this machine (and a stereo rig)  = python -m xclean.doctor
 
 Every argument after the subcommand is passed to that module's own parser, so `xclean <sub> --help` shows the
 module's options.  One default is added, for `replay` and `live` only: the engine of the published results
@@ -17,7 +18,8 @@ module's options.  One default is added, for `replay` and `live` only: the engin
 variable always wins.  Both commands print the effective engine settings before they start, in plain words (only a
 setting the user gave is shown by its variable name); a command line that the module cannot read is left to the
 module, which prints its usage error and exits 2 before anything is printed here.
-Two checks run first, for `replay` and `live` only: the input sequence folder (`replay`, `live --replay`) must look
+Two checks run first, for `replay` and `live` only: the input sequence folder (`replay`, `live --replay`,
+`live --source folder --device`) must look
 like a sequence folder (preflight), and the --out (and --record) folder must be new, empty, or an earlier output of
 the same command that --overwrite may replace (check_out_folders; the rules are in xclean/io/folders.py).
 --overwrite is removed before the arguments reach the module.  Run as modules (python -m ...), the commands check the
@@ -40,7 +42,8 @@ COMMANDS = {
     "replay": ("xclean.live.harness", "main",
                "the live engine on a recorded sequence, --mode lockstep|paced (published engine settings by default)"),
     "live": ("xclean.live.oak_demo", "main",
-             "live on an OAK-D-Lite camera (the only OAK model tested), or --replay a recording made with "
+             "live on a stereo camera: an OAK-D-Lite (the default, the only camera we tested live), any other "
+             "calibrated stereo rig with --source (docs/ANY_STEREO_LIVE.md), or --replay a recording made with "
              "--record"),
     "score": ("xclean.eval.score", "_main",
               "score a run against ground truth: a replay or live --replay run folder, an `xclean run` output "
@@ -50,9 +53,11 @@ COMMANDS = {
     "convert": ("xclean.io.convert", "main",
                 "convert a public dataset (euroc, kitti, 4seasons, rosario-v1, rosario-v2, madmax) to a sequence folder"),
     "calib": ("xclean.io.calib_import", "main",
-              "write calib.json for your own stereo camera from a Kalibr or OpenCV calibration"),
+              "write calib.json for your own stereo camera from a Kalibr or OpenCV calibration; capture image "
+              "pairs for a calibration"),
     "doctor": ("xclean.doctor", "main",
-               "check this machine (Python packages, GPU, CUDA, OAK camera) and print fixes; exit 1 on a failure"),
+               "check this machine (Python packages, GPU, CUDA, OAK camera, or a stereo rig with --source) and print "
+               "fixes; exit 1 on a failure"),
 }
 
 # The engine configuration of the published results, part (a) of the run configuration (engine behaviour): the live P1
@@ -229,6 +234,8 @@ def preflight(cmd, rest, environ=None):
             return None                            # a sequence name from a --rows file: the module resolves it
     else:
         seq, ext = a.replay, None
+        if not seq and getattr(a, "source", None) == "folder":
+            seq = a.device                         # a recording sent through the frame-source path
         if not seq:
             return None
     err = sequence_problem(seq, ext)

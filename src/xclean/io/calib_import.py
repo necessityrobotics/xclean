@@ -5,6 +5,7 @@
     xclean calib kalibr camchain-imucam.yaml [--imu imu.yaml] --out calib.json [--fps 30] [--left cam0 --right cam1]
     xclean calib opencv stereo.yml [--units m|cm|mm] [--size 1280x720] [--imu imu.yaml] --out calib.json [--fps 30]
     xclean calib check calib.json
+    xclean calib capture --source uvc-sbs --device 0 --size 1280x720 --out pairs   (image pairs for a calibration)
 
 kalibr  A Kalibr camera chain.  camchain-imucam.yaml (from a camera-IMU calibration) gives the IMU extrinsic too;
         a plain camchain.yaml gives a vision-only calib.json.  --imu takes Kalibr's imu.yaml for the IMU noise block
@@ -15,6 +16,8 @@ opencv  An OpenCV FileStorage file (.yml / .yaml / .xml) from cv2.stereoCalibrat
         the unit of your calibration target: give --units mm (or cm) when it is not metres.  Vision-only unless the
         file also holds T_cam_imu (4x4, IMU -> left camera, metres) and --imu gives the noise block.
 check   Validates an existing calib.json with the same rules and loads it as the engine does.
+capture Saves stereo image pairs from a rig through a frame source (xclean/live/sources.py), for a chessboard
+        calibration with OpenCV (docs/ANY_STEREO_LIVE.md); its result then goes through `opencv`.
 
 What is written: camera_width / camera_height, M1 / D1 / M2 / D2 (raw images; xclean rectifies them itself),
 R_stereo / T_stereo (left -> right, metres), baseline_m, T_body_cam0 (left camera -> IMU body) and R_cam0_imu (IMU body
@@ -623,9 +626,16 @@ def _write(out_path, calib, mode, defaults=None):
 
 
 def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "capture":              # image pairs from a stereo rig (xclean/live/sources.py)
+        from xclean.live.sources import capture_main
+        return capture_main(args[1:])
     ap = argparse.ArgumentParser(description="Write calib.json for your own stereo camera (docs/SEQUENCE_FORMAT.md).",
-                                 epilog="xclean calib <kalibr|opencv|check> --help shows the options of each.")
-    sub = ap.add_subparsers(dest="fmt", metavar="{kalibr,opencv,check}")
+                                 epilog="xclean calib <kalibr|opencv|check|capture> --help shows the options of "
+                                        "each.")
+    sub = ap.add_subparsers(dest="fmt", metavar="{kalibr,opencv,check,capture}")
+    sub.add_parser("capture", add_help=False,
+                   help="save stereo image pairs from a rig, for a chessboard calibration (docs/ANY_STEREO_LIVE.md)")
 
     def common(p):
         p.add_argument("--out", required=True, help="the calib.json to write")
@@ -650,7 +660,7 @@ def main(argv=None):
     common(po)
     pc = sub.add_parser("check", help="validate an existing calib.json")
     pc.add_argument("calib")
-    a = ap.parse_args(argv)
+    a = ap.parse_args(args)
     if not a.fmt:
         ap.print_help()
         return 2

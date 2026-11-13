@@ -254,6 +254,7 @@ def calib_from_eeprom_dump(dump, width=640, height=400, ref=None):
 class ReplayBackend:
     """A recording dir emitted as device-like events (module doc)."""
     kind = "replay"
+    live = False                    # stamps used as given; paced or lock-step (run_source)
 
     def __init__(self, path, mode, frames=None, ext=None):
         import cv2  # noqa: F401  (decode in the reader thread)
@@ -412,6 +413,7 @@ class ReplayBackend:
 class DeviceBackend:
     """The OAK-D-LITE through depthai 3.3 (module doc).  READ-ONLY use of the device."""
     kind = "device"
+    live = True                     # a camera: rebased integer-us clock, warm-up frames dropped, no lock-step
 
     def __init__(self, width, height, fps, mxid=None, imu_rate=IMU_RATE_REQ_HZ):
         self.W, self.H, self.fps = int(width), int(height), float(fps)
@@ -806,10 +808,14 @@ def _validity(frames, mode):
 
 
 def run_source(backend, cfg, slot, imu_q, ctl, log_path, recorder=None, rel_ring=None):
-    """The common live-source loop (device and replay).  cfg: mode ('paced' | 'lockstep'), fps (calib camera_fps),
-    duration_s (device: stop after this long of released stream; None = until ctl['stop'])."""
+    """The common live-source loop (device, replay, and the frame sources of xclean/live/sources.py).  cfg: mode
+    ('paced' | 'lockstep'), fps (calib camera_fps), duration_s (device: stop after this long of released stream;
+    None = until ctl['stop']).  backend.live (default: kind == 'device') says how the backend is treated: True = a
+    camera (session clock rebased to the first released pair in integer microseconds, frames queued during the
+    engine's warm-up dropped, no lock-step); False = a recording (stamps used as given, lock-step possible)."""
     mode = cfg.get("mode", "paced")
-    if mode == "lockstep" and backend.kind != "replay":
+    live = bool(getattr(backend, "live", backend.kind == "device"))
+    if mode == "lockstep" and live:
         raise ValueError("lockstep needs a replay source (a camera cannot wait for the engine)")
     fps = float(cfg["fps"])
     pairer = Pairer(0.5 / fps)
@@ -820,7 +826,7 @@ def run_source(backend, cfg, slot, imu_q, ctl, log_path, recorder=None, rel_ring
     extra = []                    # per frame: [idx, seq_l, seq_r, dt_lr_us, cap_l_ms, cap_r_ms, cap_to_rel_ms,
                                   #             imu_lag_ms (t_k - last released IMU stamp)]
     pre_imu = []                  # device: IMU received after the go but before the time origin
-    origin = backend.kind == "replay"
+    origin = not live
     backend.start(events)
     # engine warm-up: the device already streams; everything before the go is discarded (counted)
     while not ctl["ready"].is_set() and not ctl["stop"].is_set():
@@ -845,7 +851,7 @@ def run_source(backend, cfg, slot, imu_q, ctl, log_path, recorder=None, rel_ring
         with open(log_path, "w", encoding="utf-8") as f:
             json.dump(log, f, default=str)
         return log
-    if backend.kind == "device":                                # frames queued during warm-up are stale
+    if live:                                                    # frames queued during warm-up are stale
         while True:
             try:
                 ev = events.get_nowait()
@@ -878,7 +884,7 @@ def run_source(backend, cfg, slot, imu_q, ctl, log_path, recorder=None, rel_ring
             if not origin:
                 pre_imu.append(b)
                 continue
-            if backend.kind == "device":
+            if live:
                 ts = backend.session_t(b.us)
                 keep = ts >= 0.0
                 log["imu_pre_session"] += int((~keep).sum())
@@ -897,8 +903,8 @@ def run_source(backend, cfg, slot, imu_q, ctl, log_path, recorder=None, rel_ring
                     log["imu_pre_session"] += int((~keep).sum())
                     imub.add(ts[keep], b.g[keep], b.a[keep])
                 pre_imu = []
-            t = backend.session_t(l) if backend.kind == "device" else l.t
-            tr = backend.session_t(r) if backend.kind == "device" else r.t
+            t = backend.session_t(l) if live else l.t
+            tr = backend.session_t(r) if live else r.t
             idx = l.idx if l.idx is not None else k
             if mode == "lockstep" and prev_idx is not None:
                 while True:
@@ -959,7 +965,7 @@ def run_source(backend, cfg, slot, imu_q, ctl, log_path, recorder=None, rel_ring
             break
         if ev[0] == "I" and origin:
             b = ev[1]
-            if backend.kind == "device":
+            if live:
                 ts = backend.session_t(b.us)
                 keep = ts >= 0.0
                 imub.add(ts[keep], b.g[keep], b.a[keep])
@@ -985,13 +991,16 @@ def run_source(backend, cfg, slot, imu_q, ctl, log_path, recorder=None, rel_ring
     log["source_frames"] = extra
     log["source_frames_cols"] = ["idx", "seq_left", "seq_right", "dt_lr_us", "cap_lat_left_ms", "cap_lat_right_ms",
                                  "capture_to_release_ms", "imu_lag_ms"]
-    if backend.kind == "device" and backend.us0 is not None:
+    if live and backend.us0 is not None:
         log["t0_device_us"] = int(backend.us0)
     if recorder is not None:
-        log["recording"] = recorder.close(t0_ns=(int(backend.us0) * 1000 if backend.kind == "device"
+        log["recording"] = recorder.close(t0_ns=(int(backend.us0) * 1000 if live
                                                  and backend.us0 is not None else None))
     with open(log_path, "w", encoding="utf-8") as f:
         json.dump(log, f, default=str)
+    if getattr(backend, "source_error", None):  # a frame source (sources.py) ended with an error: an error exit
+        raise SystemExit("xclean: error: the source %s stopped with an error: %s" % (backend.name,
+                                                                                   backend.source_error))
     if getattr(backend, "read_error", None):  # the stream ended early on an unreadable image: an error exit
         raise SystemExit("xclean: error: the recording could not be read to the end: %s" % backend.read_error)
     return log
@@ -1118,10 +1127,17 @@ def source_main(cfg, slot_name, imu_q, ctl, log_path, calib_q=None):
     BEFORE streaming (the engine is started with it), then streams."""
     quiet_sigint()
     backend = None
+    extra = {}
     try:
         if cfg["kind"] == "replay":
             backend = ReplayBackend(cfg["replay_dir"], cfg.get("mode", "paced"), cfg.get("frames"), cfg.get("ext"))
             calib = backend.calib
+        elif cfg["kind"] == "source":           # any stereo rig: a frame source of xclean/live/sources.py
+            from xclean.live.sources import SourceBackend, make_source
+            src = make_source(cfg["source_spec"], cfg.get("source_opts"))
+            backend = SourceBackend(src, cfg.get("mode", "paced"))
+            calib = backend.open(cfg.get("calib"), fps=cfg.get("fps"))
+            extra = {"source": backend.describe()}
         else:
             backend = DeviceBackend(cfg["width"], cfg["height"], cfg["fps"], cfg.get("mxid"),
                                     cfg.get("imu_rate", IMU_RATE_REQ_HZ)).open()
@@ -1130,7 +1146,7 @@ def source_main(cfg, slot_name, imu_q, ctl, log_path, calib_q=None):
                 raise RuntimeError("the given calib is device %s, the attached device is %s"
                                    % (cfg["calib"].get("device_mxid"), backend.mxid))
         if calib_q is not None:
-            calib_q.put({"calib": calib, "mxid": getattr(backend, "mxid", None)})
+            calib_q.put(dict({"calib": calib, "mxid": getattr(backend, "mxid", None)}, **extra))
     except Exception as e:
         if calib_q is not None:
             calib_q.put({"error": "%s: %s" % (type(e).__name__, e)})

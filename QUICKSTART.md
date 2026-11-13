@@ -1,7 +1,7 @@
 # Quickstart
 
 The first steps with xclean on a Windows 11 PC with an NVIDIA GPU: install, check the machine, convert one public
-sequence, run it, read the score. Then the paced mode and the live OAK camera.
+sequence, run it, read the score. Then the paced mode, the live OAK camera and other stereo cameras.
 
 On Linux or an NVIDIA Jetson, install with [docs/LINUX_JETSON.md](docs/LINUX_JETSON.md); the `xclean` commands below
 are the same, with Linux paths (for example `~/data` for `C:\data`) and `unzip` in place of `tar.exe`.
@@ -291,8 +291,32 @@ On our machine this took 30 s and gave the same poses as the live run, frame for
 the IMU noise values runs without the IMU here too, and `xclean replay` says so at start.
 `xclean audit recordings\live1` flags such a recording for its missing `imu_noise`.
 
+## 11. Other stereo cameras
+
+`xclean live` also takes other calibrated stereo rigs. Give the rig with `--source` and its calibration with
+`--calib`:
+
+```
+xclean doctor --source uvc-sbs --device 0 --calib my_rig.json
+```
+
+```
+xclean live --source uvc-sbs --device 0 --calib my_rig.json --out runs\rig1 --duration 60
+```
+
+- `uvc-sbs` is one USB stereo camera that sends both images side by side; `uvc-pair` is two USB cameras (not
+  synchronised); your own source for any camera SDK is a small Python class (`--source my_rig.py:MyRig`).
+- `xclean calib capture` saves chessboard image pairs, a short OpenCV script of the guide calibrates them, and
+  `xclean calib opencv` writes `my_rig.json`.
+- We tested live runs only on the OAK-D-Lite; the other sources with recordings and simulated cameras.
+
+The steps (calibrate, connect, check, run) are in [docs/ANY_STEREO_LIVE.md](docs/ANY_STEREO_LIVE.md). Without a
+camera, `--source folder --device recordings\live1 --mode lockstep` sends a recording through the same path and
+gives the poses of `xclean live --replay`.
+
 ## Next
 
+- Any stereo rig, live: [docs/ANY_STEREO_LIVE.md](docs/ANY_STEREO_LIVE.md).
 - Your own camera and data: [docs/OWN_DATA.md](docs/OWN_DATA.md).
 - The folder format in detail: [docs/SEQUENCE_FORMAT.md](docs/SEQUENCE_FORMAT.md).
 - Other datasets: `xclean convert --help` lists the formats (EuRoC, KITTI, 4Seasons, Rosario v1 and v2, MADMAX).

@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Necessity Robotics, India
-"""`xclean live`: the live engine fed by an OAK-D-Lite camera (xclean/live/oak_source.py) instead of the replay
-FEEDER, with an optional recording of the raw stream and a small live view.
+"""`xclean live`: the live engine fed by a stereo camera instead of the replay FEEDER, with an optional recording of
+the raw stream and a small live view.  The camera is an OAK-D-Lite (xclean/live/oak_source.py, the default) or any
+other calibrated stereo rig through a frame source (xclean/live/sources.py, --source).
 
     python -m xclean.live.oak_demo --out <run folder> [--record <recording folder>] [--duration S]
         [--ref-calib <a calib.json of the same camera>  (or $XCLEAN_OAK_REF_CALIB)]
+    # any other stereo rig: a built-in source (uvc-sbs, uvc-pair) or your own (MODULE:CLASS, FILE.py:CLASS)
+    python -m xclean.live.oak_demo --out <run folder> --source uvc-sbs --device 0 --calib <calib.json>
+        [--source-opt KEY=VALUE ...] [--record <recording folder>] [--duration S]
     # the same code path from a recording, at its real rate (no camera needed)
     python -m xclean.live.oak_demo --out <run folder> --replay <recording folder> [--mode paced|lockstep]
         [--frames N] [--view window|offscreen|none]
+    # a recording sent through the frame-source path (a test of that path; lock-step gives the poses of --replay)
+    python -m xclean.live.oak_demo --out <run folder> --source folder --device <recording folder> --mode lockstep
 
 Run folder (as `xclean replay` writes it): recorder.jsonl (the RECORDER), feeder.json (the source log, the feeder's
 schema + source extras), engine_summary.json + latency.json (the engine), harness.json (the fields the live scorer
@@ -348,10 +354,14 @@ def summary_line(d, summ=None, score=None):
     return line
 
 
-def imu_note(calib, replay=None):
-    """One plain line when the run cannot use the IMU because the calibration has no IMU noise values."""
+def imu_note(calib, replay=None, source=None):
+    """One plain line when the run cannot use the IMU because the calibration has no IMU noise values.  source: the
+    name of a frame source (xclean/live/sources.py), whose calib.json comes from --calib or the source."""
     if calib.get("imu_noise"):
         return None
+    if source:
+        return ("xclean: note: the calib.json of the source %s has no imu_noise block, so this run does not use the "
+                "IMU (vision only). See docs/OWN_DATA.md, \"IMU noise values\"." % source)
     if replay:
         return ("xclean: note: the recording's calib.json has no imu_noise block, so this run does not use the IMU "
                 "(vision only). See docs/OWN_DATA.md, \"IMU noise values\".")
@@ -361,10 +371,17 @@ def imu_note(calib, replay=None):
 
 
 # ================================================================================================ main
-DESCRIPTION = """Run xclean live on an OAK-D-Lite camera, or on a recording made with --record (--replay).
+DESCRIPTION = """Run xclean live on a stereo camera, or on a recording made with --record (--replay).
 
   xclean live --out runs\\live1 --record recordings\\live1 --duration 60
   xclean live --out runs\\live1_again --replay recordings\\live1 --mode lockstep
+  xclean live --source uvc-sbs --device 0 --calib my_cam.json --out runs\\cam1
+  xclean live --source my_rig.py:MyRig --calib my_rig.json --out runs\\rig1
+
+--source picks the camera: oak (the default, an OAK-D-Lite), uvc-sbs (a USB stereo camera that sends both images
+side by side), uvc-pair (two USB cameras, not hardware-synchronised), or your own source for any SDK
+(docs/ANY_STEREO_LIVE.md).  Only the OAK-D-Lite was tested live by us; the other sources were tested with
+recordings and simulated cameras.  Check a camera first with: xclean doctor --source ... --calib ...
 
 The view window shows the trajectory seen from above, the camera image and the latency; press q or Esc in it (or
 Ctrl+C in the console) to stop.  The run folder gets the published poses (trajectory_live.csv), a summary
@@ -378,12 +395,25 @@ def build_parser():
     ap = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter,
                                  allow_abbrev=False)
     ap.add_argument("--out", required=True, help="the run folder to write; it must be new or empty")
+    ap.add_argument("--source", default="oak",
+                    help="the camera: oak (default: an OAK-D-Lite), uvc-sbs (one USB stereo camera that sends both "
+                         "images side by side), uvc-pair (two USB cameras, NOT hardware-synchronised), folder (a "
+                         "recording sent through the source path, a test), or your own source as MODULE:CLASS or "
+                         "FILE.py:CLASS (docs/ANY_STEREO_LIVE.md)")
+    ap.add_argument("--device", default=None,
+                    help="uvc-sbs: the camera number (0, 1, ...) or device path; uvc-pair: the left and the right "
+                         "camera (0,1); folder: the recording folder; your own source: passed as its option device")
+    ap.add_argument("--source-opt", action="append", default=[], metavar="KEY=VALUE",
+                    help="an option for the source, given to its class as a keyword argument; repeat it for more "
+                         "(for example --source-opt swap=true)")
     ap.add_argument("--replay", default=None,
                     help="run from this recording (made with --record) instead of the camera, at its real rate")
     ap.add_argument("--mode", default="paced", choices=("paced", "lockstep"),
-                    help="paced (default): frames arrive at the camera's rate; lockstep (with --replay only): each "
-                         "frame waits for the one before, so no frame is dropped and the result repeats exactly")
-    ap.add_argument("--frames", type=int, default=None, help="with --replay: use only the first N frames")
+                    help="paced (default): frames arrive at the camera's rate; lockstep (with --replay, --source "
+                         "folder or another recording source only): each frame waits for the one before, so no frame "
+                         "is dropped and the result repeats exactly")
+    ap.add_argument("--frames", type=int, default=None,
+                    help="with --replay or --source folder: use only the first N frames")
     ap.add_argument("--duration", type=float, default=None,
                     help="camera: stop after this many seconds (default: run until stopped)")
     ap.add_argument("--record", default=None,
@@ -391,12 +421,16 @@ def build_parser():
                          "must be new or empty; with --overwrite, an earlier recording made by xclean live is "
                          "replaced")
     ap.add_argument("--calib", default=None,
-                    help="camera: use this calib.json instead of the calibration stored in the camera")
+                    help="the camera's calib.json (made with xclean calib). Needed for uvc-sbs and uvc-pair, and for "
+                         "your own source unless it gives its own calibration; with oak it replaces the calibration "
+                         "stored in the camera")
     ap.add_argument("--ref-calib", default=DEFAULT_REF_CALIB,
-                    help="camera: a calib.json of the same camera that holds imu_noise, camera_fps and imu_rate_hz, "
+                    help="oak: a calib.json of the same camera that holds imu_noise, camera_fps and imu_rate_hz, "
                          "so that the IMU is used (docs/OWN_DATA.md)")
-    ap.add_argument("--mxid", default=None, help="camera: the device ID of the camera to use when several are attached")
-    ap.add_argument("--fps", type=float, default=30.0, help="camera: frame rate to request (default 30)")
+    ap.add_argument("--mxid", default=None, help="oak: the device ID of the camera to use when several are attached")
+    ap.add_argument("--fps", type=float, default=None,
+                    help="camera: frame rate to request (default: oak 30; other sources: camera_fps in calib.json, "
+                         "else 30)")
     ap.add_argument("--view", default="window", choices=("window", "offscreen", "none"),
                     help="window (default): a live view window; offscreen: no window, but view_final.png is written; "
                          "none: no view")
@@ -431,22 +465,76 @@ def main():
         print("xclean live: error: --engine-root needs script mode: python %s ..." % os.path.abspath(__file__),
               file=sys.stderr)
         return 2
-    if a.mode == "lockstep" and not a.replay:
+    if a.calib:
+        try:
+            json.load(open(a.calib, encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print("xclean live: error: --calib %s cannot be read (%s: %s)" % (a.calib, type(e).__name__, e),
+                  file=sys.stderr)
+            return 2
+    src_cls, opts, spec = None, {}, a.source
+    if a.source != "oak":                     # any other stereo rig: a frame source (xclean/live/sources.py)
+        from xclean.live.sources import SourceError, load_source, parse_options
+        why = None
+        if a.replay:
+            why = ("--replay replays a recording made with --record; leave out --source (or send the recording "
+                   "through the source path with --source folder --device <recording folder>)")
+        elif a.mxid or (a.ref_calib and a.ref_calib != DEFAULT_REF_CALIB):
+            why = "--mxid and --ref-calib are options of --source oak"
+        elif a.frames is not None and a.source != "folder":
+            why = "--frames works with --replay and --source folder; with a camera, use --duration"
+        elif a.calib is None and a.source in ("uvc-sbs", "uvc-pair"):
+            why = ("--source %s needs --calib: the camera's calib.json, made with xclean calib "
+                   "(docs/ANY_STEREO_LIVE.md)" % a.source)
+        elif a.source == "folder" and not a.device:
+            why = "--source folder needs --device <recording folder>"
+        if why is None:
+            try:
+                src_cls = load_source(a.source)
+                opts = parse_options(a.source_opt)
+            except SourceError as e:
+                why = str(e)
+        if why:
+            print("xclean live: error: %s" % why, file=sys.stderr)
+            return 2
+        if a.device is not None:
+            opts["device"] = a.device
+        if a.fps is not None and a.source in ("uvc-sbs", "uvc-pair"):
+            opts.setdefault("fps", a.fps)
+        if a.frames is not None:
+            opts["frames"] = a.frames
+        if ":" in a.source:                   # FILE.py:CLASS -> an absolute file path for the source process
+            where, cname = a.source.rsplit(":", 1)
+            if where.lower().endswith(".py") or "/" in where or "\\" in where:
+                spec = "%s:%s" % (os.path.abspath(where), cname)
+        if a.mode == "lockstep" and getattr(src_cls, "live", True):
+            print("xclean live: error: --mode lockstep needs --replay or a recording source such as --source folder "
+                  "(a camera cannot wait for the engine)", file=sys.stderr)
+            return 2
+    elif a.device is not None or a.source_opt:
+        print("xclean live: error: --device and --source-opt are options of the other sources; pick an OAK camera "
+              "with --mxid", file=sys.stderr)
+        return 2
+    elif a.mode == "lockstep" and not a.replay:
         print("xclean live: error: --mode lockstep needs --replay (a camera cannot wait for the engine)",
               file=sys.stderr)
         return 2
+    if a.source == "oak" and a.fps is None:
+        a.fps = 30.0                          # the OAK default frame rate (as before 0.3.0)
     if a.pin:
         try:
             H.pin_layout()
         except ValueError as e:
             print("xclean: %s" % e, file=sys.stderr)
             return 2
-    if a.replay:
-        problem = FO.sequence_problem(a.replay)
+    for seq in (a.replay, a.device if a.source == "folder" else None):
+        problem = seq and FO.sequence_problem(seq)
         if problem:
             print("xclean: error: %s" % problem, file=sys.stderr)
             return 2
     inputs = [a.replay, a.calib, a.ref_calib]
+    if a.source != "oak" and a.device and os.path.exists(a.device):
+        inputs.append(a.device)                              # a folder or file named by --device is an input too
     for opt, folder, kind, other in (("--out", a.out, "live", ("--record", a.record)),
                                      ("--record", a.record, "recording", ("--out", a.out))):
         problem = folder and FO.check_output_folder("live", opt, folder, True, kind, inputs=inputs, others=[other])
@@ -482,18 +570,21 @@ def main():
     imu_q, msg_q, calib_q = ctx.Queue(), ctx.Queue(), ctx.Queue()
     pid = os.getpid()
     slot_name, rel_name, pose_name = "xclean_slot_%d" % pid, "xclean_oakrel_%d" % pid, "xclean_oakpose_%d" % pid
-    ref = json.load(open(a.ref_calib, encoding="utf-8")) if (not a.replay and a.ref_calib
+    ref = json.load(open(a.ref_calib, encoding="utf-8")) if (not a.replay and a.source == "oak" and a.ref_calib
                                                              and os.path.isfile(a.ref_calib)) else None
     given = json.load(open(a.calib, encoding="utf-8")) if a.calib else None
-    scfg = {"kind": "replay" if a.replay else "device", "mode": a.mode, "replay_dir": a.replay, "frames": a.frames,
+    kind = "replay" if a.replay else ("device" if a.source == "oak" else "source")
+    scfg = {"kind": kind, "mode": a.mode, "replay_dir": a.replay, "frames": a.frames,
             "fps": a.fps, "width": (given or ref or {}).get("camera_width", 640),
             "height": (given or ref or {}).get("camera_height", 400), "mxid": a.mxid, "calib": given,
             "ref_calib": ref, "record_dir": os.path.abspath(a.record) if a.record else None, "rel_ring": rel_name,
             "duration_s": a.duration}
+    if kind == "source":
+        scfg.update(source_spec=spec, source_opts=opts)
     rel = ReleaseRing(rel_name, create=True)
     t_start = time.time()
     src = ctx.Process(target=source_main, args=(scfg, slot_name, imu_q, ctl, os.path.join(out, "feeder.json"),
-                                                calib_q), name="oak-source")
+                                                calib_q), name="oak-source" if kind != "source" else "source")
     src.start()
     got = None
     while got is None:
@@ -505,25 +596,50 @@ def main():
     if "error" in got:
         src.join(10)
         rel.close(unlink=True)
-        print("xclean live: error: the %s could not be started: %s" % ("recording" if a.replay else "camera",
-                                                                      got["error"]), file=sys.stderr, flush=True)
+        what = "recording" if a.replay else ("camera" if kind == "device" else "source %s" % a.source)
+        print("xclean live: error: the %s could not be started: %s" % (what, got["error"]), file=sys.stderr,
+              flush=True)
         json.dump({"error": got["error"], "args": vars(a)}, open(os.path.join(out, "demo.json"), "w"), indent=1)
         return 2
     calib = got["calib"]
-    has_imu_data = os.path.isfile(os.path.join(a.replay, "imu.jsonl")) if a.replay else True
-    first = imu_note(calib, a.replay) if has_imu_data else None
+    srcd = got.get("source")              # a frame source: name, live, has_imu, hardware_sync, notes
+    if srcd is not None:
+        has_imu_data = bool(srcd["has_imu"])
+        print("xclean: source: %s (%s; IMU samples: %s)" % (srcd["name"], "a camera" if srcd["live"] else
+                                                            "a recording", "yes" if has_imu_data else "no"), flush=True)
+        if srcd["live"]:
+            print("xclean: note: we tested live runs only on an OAK-D-Lite. This source path was tested with "
+                  "recordings and simulated cameras (docs/ANY_STEREO_LIVE.md).", flush=True)
+        for n_ in srcd.get("notes") or ():
+            print("xclean: note: %s" % n_, flush=True)
+        if not srcd["hardware_sync"]:
+            print("xclean: warning: the two cameras of the source %s are not hardware-synchronised, so the two "
+                  "images of a pair are taken at different moments (up to one frame period apart). Under motion "
+                  "this gives wrong depth and wrong poses. For real use, take a stereo camera with a shared trigger "
+                  "(docs/ANY_STEREO_LIVE.md)." % srcd["name"], file=sys.stderr, flush=True)
+    else:
+        has_imu_data = os.path.isfile(os.path.join(a.replay, "imu.jsonl")) if a.replay else True
+    first = imu_note(calib, a.replay, source=srcd["name"] if srcd else None) if has_imu_data else None
     if first is None:                     # IMU in use, or vision only for another reason than missing noise values
-        print(H.imu_status_line(calib, has_imu_data, env=dict(os.environ, **env), recording=bool(a.replay)),
-              flush=True)
-    for note in (first, H.imu_config_note(a.replay, calib) if a.replay else None):
+        vi_off = (dict(os.environ, **env).get("XCLEAN_P1_VI", "1") or "1").strip() == "0"
+        if srcd is not None and not has_imu_data and not vi_off:
+            print("xclean: vision only: the source %s gives no IMU samples." % srcd["name"], flush=True)
+        else:
+            print(H.imu_status_line(calib, has_imu_data, env=dict(os.environ, **env), recording=bool(a.replay)),
+                  flush=True)
+    seq_dir = a.replay or (a.device if a.source == "folder" else None)
+    for note in (first, H.imu_config_note(seq_dir, calib) if seq_dir else None):
         if note:
             print(note, file=sys.stderr, flush=True)
     W, Hh = int(calib["camera_width"]), int(calib["camera_height"])
     slot = FrameSlot(slot_name, W, Hh, create=True)
     pose = PoseRing(pose_name, create=True) if a.view != "none" else None
     ctl["slot_ready"].set()
-    tag = a.tag or ("oak_replay" if a.replay else "oak_live")
-    has_imu = os.path.isfile(os.path.join(a.replay, "imu.jsonl")) if a.replay else True
+    sname = srcd["name"] if srcd else None
+    tag = a.tag or ("oak_replay" if a.replay else ("oak_live" if kind == "device" else
+                                                   "source_%s" % "".join(c if c.isalnum() else "_" for c in sname)))
+    has_imu = has_imu_data if srcd is not None else (os.path.isfile(os.path.join(a.replay, "imu.jsonl"))
+                                                     if a.replay else True)
     ecfg = {"tag": tag, "calib": calib, "env": env, "final": False, "seed": a.seed, "has_imu": has_imu,
             "mode": a.mode}
     eng_q = TapQueue(msg_q, pose_name) if pose is not None else msg_q
@@ -567,9 +683,10 @@ def main():
     mon.start()
     view, win = None, "xclean OAK live demo"
     if pose is not None:
-        view = DemoView(slot, pose, rel, float(calib.get("camera_fps") or a.fps),
+        view = DemoView(slot, pose, rel, float(calib.get("camera_fps") or a.fps or 30.0),
                         "%s  %s" % ("REPLAY " + os.path.basename(os.path.normpath(a.replay)) if a.replay
-                                    else "LIVE OAK-D-LITE %s" % (got.get("mxid") or ""), a.mode))
+                                    else ("LIVE OAK-D-LITE %s" % (got.get("mxid") or "") if kind == "device"
+                                          else "%s %s" % ("LIVE" if srcd["live"] else "SOURCE", sname)), a.mode))
     canvas = None
     eos_forced = False
     try:
@@ -669,7 +786,8 @@ def main():
     if nfb:
         open(os.path.join(out, "DIAGNOSTIC_RUN.txt"), "w").write(
             "DIAGNOSTIC RUN - not comparable with the published runs: %s\n" % ", ".join(nfb))
-    label = ("oak demo %s (%s)" % ("replay" if a.replay else "LIVE DEVICE", a.mode)
+    label = (("oak demo %s (%s)" % ("replay" if a.replay else "LIVE DEVICE", a.mode) if kind != "source"
+              else "live source %s (%s)" % (sname, a.mode))
              + (" - diagnostic run (engine switches: %s)" % ", ".join(nfb) if nfb else ""))
     # the fields score_live reads; validity is NOT judged by the demo (no witness protocol): valid = None
     json.dump({"tag": tag, "mode": a.mode, "label": label, "valid": None, "producer": "xclean/live/oak_demo.py",
@@ -683,6 +801,8 @@ def main():
             "calib_source": calib.get("source"), "device_mxid": got.get("mxid"),
             "frames_released": len(feeder.get("frames", [])), "frames_replaced": len(feeder.get("replaced", [])),
             "recording": feeder.get("recording")}
+    if srcd is not None:              # a frame source (sources.py): its facts; OAK and --replay runs have no key
+        demo["source"] = srcd
     if failed:                        # failure path only (a successful run's demo.json is unchanged)
         demo["engine_failed"] = {"exitcode": eng.exitcode, "during_startup": early_exit,
                                  "children_stopped": children_stopped}
@@ -707,7 +827,8 @@ def main():
     except Exception as e:
         print("xclean: warning: the run summary was not written (%s: %s)" % (type(e).__name__, e), flush=True)
     console = {k: demo[k] for k in ("tag", "mode", "label", "wall_s", "frames_released", "frames_replaced")}
-    console["label"] = ("%s (%s)" % ("replay of a recording" if a.replay else "live camera", a.mode)
+    console["label"] = ("%s (%s)" % ("replay of a recording" if a.replay else ("live camera" if kind == "device"
+                                                                              else "source %s" % sname), a.mode)
                         + (" - diagnostic run (engine switches: %s)" % ", ".join(nfb) if nfb else ""))
     if a.json:                                # the raw records; demo.json and demo_summary.json always have them
         if summ is not None:
@@ -722,7 +843,8 @@ def main():
     rc = 0 if checks["processes_ok"] else 1
     if src.exitcode not in (0, None):
         print("xclean: the %s stopped with an error (exit code %s); its error is printed above. The stream was ended "
-              "early." % ("recording reader" if a.replay else "camera source", src.exitcode),
+              "early." % ("recording reader" if a.replay else ("camera source" if kind == "device"
+                                                                else "source %s" % sname), src.exitcode),
               file=sys.stderr, flush=True)
     rec_info = feeder.get("recording") or {}
     if rec_info.get("image_write_errors"):

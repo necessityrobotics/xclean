@@ -9,7 +9,9 @@ There are two routes:
 - **Luxonis OAK-D-Lite:** `xclean live --record` writes a ready folder, with the calibration read from the camera.
   See [OAK-D-Lite](#oak-d-lite).
 - **Any other stereo camera:** calibrate it (Kalibr or OpenCV), let `xclean calib` write `calib.json`, and write
-  the images, time stamps and IMU samples into the folder yourself. A small script below does this.
+  the images, time stamps and IMU samples into the folder yourself. A small script below does this. From 0.3.0,
+  `xclean live --source ... --record` can also write the folder while it runs live: see
+  [ANY_STEREO_LIVE.md](ANY_STEREO_LIVE.md).
 
 Then check the folder with `xclean audit` and run it with `xclean replay`.
 
