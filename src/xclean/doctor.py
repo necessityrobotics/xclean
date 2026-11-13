@@ -3,6 +3,7 @@
 """`xclean doctor`: check this machine before a run, in plain language.
 
     xclean doctor [--full] [--out DIR] [--size WxH] [--json]
+    xclean doctor --source NAME [--device D] [--source-opt KEY=VALUE ...] [--calib calib.json] [--seconds S]
 
 Each check prints OK, WARN or FAIL, and a one-line fix for WARN / FAIL.  The exit code is 0 when nothing FAILs, else 1.
 Checks: the Python version; numpy / scipy / numba / llvmlite / opencv / psutil against the tested versions; which
@@ -13,6 +14,9 @@ path, the CUDA kernel compiler NVRTC: version and where it was loaded from, the 
 GPU kernel, and the folders its CUDA libraries were loaded from); whether a system CUDA Toolkit is visible and whether
 this environment is self-contained; with --full, the GPU front end's start-up self-check; depthai and connected OAK
 cameras (no stream is started); free disk space at the output folder.
+With --source (any stereo rig, docs/ANY_STEREO_LIVE.md) the OAK check is replaced by a check of that source: it is
+opened, read for a few seconds and closed; the calibration, the image size, the frame rate, the time stamps, the
+IMU samples and the synchronisation of the pair are checked.
 Nothing is installed or changed.  Without a GPU the GPU checks FAIL with a fix; they never stop the other checks.
 """
 from __future__ import annotations
@@ -714,6 +718,94 @@ def check_oak():
     return out
 
 
+def check_source(spec, device=None, options=(), calib_path=None, seconds=3.0, fps=None):
+    """`xclean doctor --source`: open a frame source (xclean/live/sources.py), read it for `seconds` and close it.
+    Checks what `xclean live --source` needs from it.  Nothing is written."""
+    from xclean.io.calib_import import summary_line
+    from xclean.live import sources as S
+    doc = "docs/ANY_STEREO_LIVE.md"
+    try:
+        opts = S.parse_options(options)
+        if device is not None:
+            opts["device"] = device
+        if fps and spec in ("uvc-sbs", "uvc-pair"):
+            opts.setdefault("fps", fps)
+        given = None
+        if calib_path:
+            try:
+                given = json.load(open(calib_path, encoding="utf-8"))
+            except (OSError, ValueError) as e:
+                raise S.SourceError("--calib %s cannot be read (%s: %s)" % (calib_path, type(e).__name__, e))
+        src = S.make_source(spec, opts)
+    except S.SourceError as e:
+        return [Check(FAIL, "Stereo source", str(e), "see %s" % doc)]
+    r = S.probe(src, given, seconds=seconds, fps=fps)
+    sync = "a hardware-synchronised pair" if r["hardware_sync"] else "NOT hardware-synchronised"
+    gap = ((r.get("info") or {}).get("arrival_gap_ms") or {})
+    if gap:
+        sync += " (arrival gap p50 %.1f ms, max %.1f ms)" % (gap["p50"], gap["max"])
+    head = "%s: %s, IMU samples: %s, %s" % (r["name"], "a camera" if r["live"] else "a recording",
+                                           "yes" if r["has_imu"] else "no", sync)
+    out = [Check(OK if r["hardware_sync"] else WARN, "Stereo source", head,
+                 "" if r["hardware_sync"] else "use it for tests only: under motion the two images of a pair show "
+                                               "different moments (%s)" % doc)]
+    calib = r.get("calib")
+    if calib is None:
+        out.append(Check(FAIL, "Stereo source", r["error"] or "the source could not be opened",
+                         "check the connection, the --device and the --calib file (%s)" % doc))
+        return out
+    out.append(Check(OK, "Calibration", summary_line(calib, S.check_calib(calib))))
+    for n in r.get("notes") or ():
+        out.append(Check(WARN, "Calibration", n, "xclean calib ... --fps <rate>"))
+    if r["error"]:
+        out.append(Check(FAIL, "Stereo frames", r["error"], "see %s" % doc))
+    n = r["frames"]
+    if n < 2:
+        if not r["error"]:
+            out.append(Check(FAIL, "Stereo frames", "%d stereo frame(s) in %g s" % (n, seconds),
+                             "check that the camera streams (%s)" % doc))
+        return out
+    fps_c = float(calib.get("camera_fps") or 0)
+    fm = r.get("fps_measured")
+    det = "%d frames of %d x %d over %.2f s, %.2f Hz measured (camera_fps %g)" % (
+        n, int(calib["camera_width"]), int(calib["camera_height"]), r.get("span_s") or 0, fm or 0, fps_c)
+    if r["frames_out_of_order"]:
+        out.append(Check(FAIL, "Stereo frames", det + "; %d frame time(s) did not increase" % r["frames_out_of_order"],
+                         "give each pair a time stamp that increases (one clock, seconds)"))
+    elif fm and fps_c and abs(fm - fps_c) > 0.05 * fps_c:
+        out.append(Check(WARN, "Stereo frames", det + ": more than 5 % apart",
+                         "set camera_fps in calib.json to the rate the camera gives, or ask the camera for that rate "
+                         "(--fps)"))
+    else:
+        out.append(Check(OK, "Stereo frames", det))
+    if r.get("identical_pairs") == n:
+        out.append(Check(WARN, "Stereo frames", "the left and right images were identical in every pair",
+                         "check that the source gives two different cameras (the same camera twice?)"))
+    if r["has_imu"]:
+        ni = r.get("imu_samples", 0)
+        rate_c = float(calib.get("imu_rate_hz") or 0)
+        if ni == 0:
+            out.append(Check(FAIL, "IMU samples", "the source says it has an IMU, but gave no IMU samples",
+                             "yield ImuSamples from frames(), or set has_imu = False (%s)" % doc))
+        else:
+            det = "%d samples, %.1f Hz measured (imu_rate_hz %g)" % (ni, r.get("imu_rate_hz") or 0, rate_c)
+            if r.get("imu_nonincreasing"):
+                out.append(Check(WARN, "IMU samples", det + "; %d time(s) did not increase" % r["imu_nonincreasing"],
+                                 "send the samples in time order, without repeated times"))
+            elif rate_c and r.get("imu_rate_hz") and abs(r["imu_rate_hz"] - rate_c) > 0.02 * rate_c:
+                out.append(Check(WARN, "IMU samples", det + ": more than 2 % apart",
+                                 "set imu_rate_hz in calib.json to the measured rate"))
+            else:
+                out.append(Check(OK, "IMU samples", det))
+        if not calib.get("imu_noise"):
+            out.append(Check(WARN, "IMU samples", "calib.json has no imu_noise block: the IMU is not used (vision "
+                                                  "only)", 'add imu_noise (docs/OWN_DATA.md, "IMU noise values")'))
+    elif calib.get("imu_rate_hz"):
+        out.append(Check(WARN, "IMU samples", "calib.json sets imu_rate_hz %g but the source gives no IMU samples"
+                         % float(calib["imu_rate_hz"]), "set imu_rate_hz to 0 for a rig without IMU"))
+    return out
+
+
 def check_disk(out_dir=None):
     d = os.path.abspath(out_dir or os.getcwd())
     probe = d
@@ -735,8 +827,10 @@ def check_disk(out_dir=None):
     return [Check(OK, "Disk", "%.0f GB free at %s" % (free, probe))]
 
 
-def run_checks(full=False, out_dir=None, size=(640, 400)):
-    """-> list of Check.  Every check is isolated: an unexpected error becomes a FAIL line, never a traceback."""
+def run_checks(full=False, out_dir=None, size=(640, 400), source=None):
+    """-> list of Check.  Every check is isolated: an unexpected error becomes a FAIL line, never a traceback.
+    source: None or a dict of check_source's arguments (spec, device, options, calib_path, seconds, fps); a source
+    other than oak replaces the OAK check."""
     res = []
 
     def safe(name, fn, *a):
@@ -765,7 +859,10 @@ def run_checks(full=False, out_dir=None, size=(640, 400)):
     res += safe("System CUDA Toolkit", check_toolkit, facts, None, gpu_ok)
     if full:
         res += safe("GPU front end", check_gpu_front, cp, gpu_ok, size)
-    res += safe("OAK camera", check_oak)
+    if source and source.get("spec") not in (None, "oak"):
+        res += safe("Stereo source", lambda: check_source(**source))
+    else:
+        res += safe("OAK camera", check_oak)
     res += safe("Disk", check_disk, out_dir)
     return res
 
@@ -789,12 +886,28 @@ def main(argv=None):
     ap.add_argument("--out", default=None, help="the folder runs will write to (free-space check; default: here)")
     ap.add_argument("--size", default="640x400", help="image size WxH for --full (default 640x400, an OAK-D-Lite)")
     ap.add_argument("--json", action="store_true", help="print the checks as JSON")
+    ap.add_argument("--source", default=None,
+                    help="also check a stereo rig, as xclean live --source takes it: uvc-sbs, uvc-pair, folder, or "
+                         "your own source as MODULE:CLASS or FILE.py:CLASS (docs/ANY_STEREO_LIVE.md); it is opened, "
+                         "read for --seconds and closed")
+    ap.add_argument("--device", default=None, help="with --source: the camera (as for xclean live --device)")
+    ap.add_argument("--source-opt", action="append", default=[], metavar="KEY=VALUE",
+                    help="with --source: an option for the source (repeat it for more)")
+    ap.add_argument("--calib", default=None, help="with --source: the rig's calib.json")
+    ap.add_argument("--fps", type=float, default=None, help="with --source: the frame rate to ask for")
+    ap.add_argument("--seconds", type=float, default=3.0, help="with --source: how long to read it (default 3)")
     a = ap.parse_args(argv)
     try:
         W, H = (int(x) for x in a.size.lower().split("x"))
     except ValueError:
         ap.error("--size must look like 640x400")
-    checks = run_checks(full=a.full, out_dir=a.out, size=(W, H))
+    source = None
+    if a.source:
+        source = {"spec": a.source, "device": a.device, "options": a.source_opt, "calib_path": a.calib,
+                  "seconds": a.seconds, "fps": a.fps}
+    elif a.device or a.source_opt or a.calib or a.fps is not None:
+        ap.error("--device, --source-opt, --calib and --fps need --source")
+    checks = run_checks(full=a.full, out_dir=a.out, size=(W, H), source=source)
     if a.json:
         print(json.dumps([c.as_dict() for c in checks], indent=1))
     else:

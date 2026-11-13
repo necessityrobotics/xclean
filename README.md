@@ -1,7 +1,10 @@
 # xclean
 
 Real-time stereo visual-inertial SLAM, built in India. Python, with GPU code written in CuPy and CPU code compiled
-with Numba: no C++ build step, no ROS. Runs natively on Windows 11 and live on a Luxonis OAK-D-Lite stereo camera.
+with Numba: no C++ build step, no ROS. Runs natively on Windows 11. It runs on recordings of any calibrated stereo
+camera, and live on a Luxonis OAK-D-Lite. From 0.3.0, `xclean live` also takes any other calibrated stereo rig: a
+USB stereo camera, two USB cameras, or your own source for any camera SDK (see
+[docs/ANY_STEREO_LIVE.md](docs/ANY_STEREO_LIVE.md)). We tested live runs only on the OAK-D-Lite.
 From 0.2.0 it also installs on Linux (x86-64 and ARM64), including NVIDIA Jetson Orin and Jetson Thor robot computers:
 see [docs/LINUX_JETSON.md](docs/LINUX_JETSON.md). We have not run it on Linux or Jetson hardware ourselves.
 
@@ -56,7 +59,9 @@ was done: <https://necessityrobotics.github.io/paper.html>.
   is free.
 - conda (Miniconda, Anaconda or Miniforge), and git to get the code. On Jetson, a Python venv on top of JetPack works
   too.
-- For live use: a Luxonis OAK-D-Lite (the only camera we tested).
+- For live use: a calibrated stereo rig. The Luxonis OAK-D-Lite is built in and is the only camera we tested live.
+  Other rigs connect through `--source` ([docs/ANY_STEREO_LIVE.md](docs/ANY_STEREO_LIVE.md)); we tested that path
+  with recordings and simulated cameras.
 
 ## Install
 
@@ -131,12 +136,12 @@ pytest
 
 | command | what it does |
 |---|---|
-| `xclean doctor` | checks Python, the packages, the driver, the GPU, CUDA and an attached OAK camera; `--full` also runs the GPU front end's self-check |
+| `xclean doctor` | checks Python, the packages, the driver, the GPU, CUDA and an attached OAK camera; `--full` also runs the GPU front end's self-check; `--source ... --calib ...` checks another stereo rig instead of the OAK camera |
 | `xclean convert <format> <in> <out>` | turns one sequence of a public dataset (EuRoC, KITTI, 4Seasons, Rosario v1 and v2, MADMAX) into a sequence folder |
-| `xclean calib kalibr` / `opencv` / `check` | writes or checks `calib.json` for your own stereo camera |
+| `xclean calib kalibr` / `opencv` / `check` | writes or checks `calib.json` for your own stereo camera; `xclean calib capture` saves image pairs from a rig for a chessboard calibration |
 | `xclean audit <folder>` | checks a sequence folder: time stamps, image counts, IMU, ground truth, calibration |
 | `xclean replay <folder> --out DIR` | runs the live engine on a recorded sequence. `--mode lockstep`: every frame, no drops. `--mode paced`: frames at their recorded times, for latency. `--score` scores against ground truth |
-| `xclean live --out DIR` | runs live on an OAK-D-Lite; `--record` saves the stream as a sequence folder; `--replay` runs a recording through the same path |
+| `xclean live --out DIR` | runs live on an OAK-D-Lite, or on any calibrated stereo rig with `--source` (`uvc-sbs`, `uvc-pair`, or your own `FILE.py:CLASS`) and `--calib`; `--record` saves the stream as a sequence folder; `--replay` runs a recording through the same path |
 | `xclean run <folder> --out DIR` | the offline runner (a separate code path; needs the GPU). Without `--out` it writes to `runs\<sequence name>` in the current folder |
 | `xclean score <run folder or csv>` | scores a finished run against ground truth: a `replay` or `live --replay` run folder (it finds the sequence folder it was made from), an `xclean run` output folder, or a trajectory CSV (with `--dataset`). A live camera run has no ground truth to score against. For `replay`, `--score` does this at the end of the run |
 
@@ -153,6 +158,7 @@ raw run record (and, with `--score`, the score) as JSON; the run folder holds th
 options.
 
 - First steps, from install to a scored run: [QUICKSTART.md](QUICKSTART.md).
+- Any stereo rig, live (calibrate, connect, check, run): [docs/ANY_STEREO_LIVE.md](docs/ANY_STEREO_LIVE.md).
 - Your own camera and data: [docs/OWN_DATA.md](docs/OWN_DATA.md).
 - The sequence folder format: [docs/SEQUENCE_FORMAT.md](docs/SEQUENCE_FORMAT.md).
 
@@ -176,6 +182,11 @@ CPU front end, bit for bit.
 
 ## Known limits
 - Tested on one machine: AMD Ryzen 9 9950X, NVIDIA RTX 5090, Windows 11. Other CPUs, GPUs and drivers are not tested.
+- Live stereo rigs (0.3.0): live runs were tested only on an OAK-D-Lite. The other sources (`uvc-sbs`, `uvc-pair`,
+  your own source) were tested with recordings and simulated cameras: a recording sent through the source path gives
+  the same pose for every frame as `xclean replay` and `xclean live --replay` (lock-step, also on a whole EuRoC
+  sequence with the IMU in use). `uvc-pair` cameras are not synchronised. Reports with the output of
+  `xclean doctor --source` are welcome.
 - Linux and NVIDIA Jetson (0.2.0): installed and tested in CI on GitHub's Linux machines (x86-64 and ARM64, no GPU):
   the test suite passes and every GPU kernel compiles for the supported GPUs, including Jetson Orin (sm_87) and Jetson
   Thor (sm_110). No xclean run on a Linux or Jetson GPU has been made by us, so accuracy and speed there are

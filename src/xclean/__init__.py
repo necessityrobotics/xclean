@@ -18,7 +18,7 @@ plain pip install, or a Jetson using JetPack's CUDA: the installed CUDA Toolkit 
 imported here.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 CUDA_PATH_NOTE = None          # what the CUDA compiler step did in this process (read by `xclean doctor`)
 ENV_NVRTC_DLL = "nvrtc64_130_0.dll"      # the CUDA 13 kernel compiler that environment.yml installs (cuda-nvrtc)
