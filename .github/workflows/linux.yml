@@ -151,9 +151,14 @@ jobs:
           XCLEAN_REQUIRE_NVRTC: "1"
         run: |
           set +e
-          /tmp/xc/bin/python -m pytest -q -rfEs --tb=short -p no:faulthandler > pytest.log 2>&1
+          export PATH="/tmp/xc/bin:$PATH"
+          python -m pytest -q -rfEs --tb=short -p no:faulthandler > pytest.log 2>&1
           rc=$?
           cat pytest.log
+          # the test in the real pip environment, the kernel builds and the console-script test must have run
+          if grep -q "needs a pip-only environment\|console script is not on PATH\|NVRTC" <(grep '^SKIPPED' pytest.log); then
+            echo "a test of the pip route was skipped" >> pytest.log; rc=1
+          fi
           python .github/annotate.py pytest "pytest (pip, ${{ matrix.os }}, Python ${{ matrix.python }})" pytest.log "$rc"
           exit "$rc"
       - name: The exact tested versions install with the constraints file (Python 3.12)

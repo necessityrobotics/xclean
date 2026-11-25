@@ -45,7 +45,10 @@ jobs:
           python -m venv /tmp/t_wheel
           /tmp/t_wheel/bin/pip install "$(ls dist/*.whl)[gpu]" pytest
           (cd /tmp && env -u CUDA_PATH /tmp/t_wheel/bin/python -c "import xclean; n = xclean.CUDA_PATH_NOTE; print(xclean.__file__, xclean.__version__, n); assert 'site-packages' in xclean.__file__ and 'NVIDIA pip packages' in n['why']")
-          /tmp/t_wheel/bin/python -m pytest -q -rfEs --tb=short -p no:faulthandler
+          export PATH="/tmp/t_wheel/bin:$PATH"
+          python -m pytest -q -rfEs --tb=short -p no:faulthandler | tee pytest.log
+          test "${PIPESTATUS[0]}" = "0"
+          ! grep '^SKIPPED' pytest.log | grep -q "needs a pip-only environment\|console script is not on PATH\|NVRTC"
       - name: Source package, in a second clean environment
         run: |
           python -m venv /tmp/t_sdist

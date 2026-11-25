@@ -49,10 +49,10 @@ MATCHED_OPENBLAS_CORE = "skylakex"   # the OpenBLAS CPU kernel the GPU front end
 FIX_ENV = "recreate the environment from environment.yml (conda env remove -n xclean, then conda env create -f " \
           "environment.yml)"
 # a pip install (0.3.1), not a conda environment; the constraints file needs Python 3.11 or newer and is not for Jetson
-if (not os.path.isdir(os.path.join(sys.prefix, "conda-meta")) and sys.version_info >= (3, 11)
-        and not os.path.isfile("/etc/nv_tegra_release")):
-    FIX_ENV = ("install the tested versions: add -c constraints-tested.txt to the pip command (the file is in the xclean "
-               "repository; see README, \"Install with pip\"), or use the conda environment.yml")
+if not os.path.isdir(os.path.join(sys.prefix, "conda-meta")) and not os.path.isfile("/etc/nv_tegra_release"):
+    FIX_ENV = ("install the tested versions: %sadd -c constraints-tested.txt to the pip command (the file is in the "
+               "xclean repository; see README, \"Install with pip\"), or use the conda environment.yml"
+               % ("" if sys.version_info >= (3, 11) else "make the environment with Python 3.12 and "))
 if not sys.platform.startswith("win"):
     FIX_ENV += "; a Jetson venv takes its versions from pip and JetPack (docs/LINUX_JETSON.md)"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
