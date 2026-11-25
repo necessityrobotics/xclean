@@ -12,17 +12,32 @@ own CUDA kernel compiler, as environment.yml installs it, xclean makes CuPy use 
 - Linux (x86-64 and ARM64): <env>/lib/libnvrtc.so.<N>.  CUDA_PATH is set to <env> and that library is loaded into this
   process; child processes repeat the step when they import xclean.
 CuPy then uses the environment's compiler and its matching CUDA headers, even when a different CUDA Toolkit is
-installed on the machine or the environment was not activated.  Nothing is changed when XCLEAN_KEEP_CUDA_PATH is set
-(to anything but 0), when CuPy was imported before xclean, or when the environment has no compiler of its own (a
-plain pip install, or a Jetson using JetPack's CUDA: the installed CUDA Toolkit stays in charge).  CuPy itself is not
-imported here.
+installed on the machine or the environment was not activated.
+
+pip-only install (0.3.1): when the environment has no conda compiler but holds CuPy for CUDA 13 (cupy-cuda13x) and
+the NVIDIA pip packages nvidia-cuda-nvrtc and nvidia-cuda-runtime (the `gpu` extra:
+`pip install "xstereo-slam[gpu]"`), xclean uses those:
+CUDA_PATH is set to <site-packages>/nvidia/cu13 (its `include` folder has the CUDA headers); on Windows the folder
+of nvrtc64_130_0.dll is put first on PATH and registered as a DLL folder, on Linux libnvrtc.so.13 is loaded into
+the process.  A conda compiler in the environment has priority over the pip packages.  The pip packages are not
+used without cupy-cuda13x (CuPy for CUDA 12 needs CUDA 12 headers) and not on a Jetson (JetPack's CUDA stays in
+charge there).
+
+Nothing is changed when XCLEAN_KEEP_CUDA_PATH is set (to anything but 0), when CuPy was imported before xclean, or
+when the environment has no compiler of its own (a pip install without these NVIDIA pip packages, or a Jetson using
+JetPack's CUDA: the installed CUDA Toolkit stays in charge).  CuPy itself is not imported here.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 CUDA_PATH_NOTE = None          # what the CUDA compiler step did in this process (read by `xclean doctor`)
 ENV_NVRTC_DLL = "nvrtc64_130_0.dll"      # the CUDA 13 kernel compiler that environment.yml installs (cuda-nvrtc)
 ENV_NVRTC_SO = "libnvrtc.so.*"           # the same compiler on Linux (conda-forge layout: <env>/lib)
+PIP_CUDA_DIR = ("nvidia", "cu13")        # the NVIDIA pip packages (nvidia-cuda-nvrtc, nvidia-cuda-runtime) install here
+PIP_CUDA_NOTE = "the NVIDIA pip packages of this environment (nvidia-cuda-nvrtc, nvidia-cuda-runtime)"
+PIP_CUPY_INFO = "cupy_cuda13x-*.dist-info"   # the pip packages are used only beside CuPy for CUDA 13
+JETSON_FILE = "/etc/nv_tegra_release"        # exists on NVIDIA Jetson (L4T): JetPack's CUDA is used there
+_DLL_DIRS = []                           # Windows: the handles of os.add_dll_directory, kept for the life of the process
 
 
 def _env_nvrtc_so(prefix, machine=None):
@@ -40,17 +55,49 @@ def _env_nvrtc_so(prefix, machine=None):
     return None
 
 
-def _use_env_cuda(environ=None, prefix=None, platform=None, modules=None, preload=None, machine=None):
+def _pip_cuda(paths, windows):
+    """-> (root, lib_dir, compiler file) of the NVIDIA pip packages found on `paths` (sys.path), or None.
+    root is <site-packages>/nvidia/cu13.  Both packages must be there: the kernel compiler (nvidia-cuda-nvrtc) and
+    the CUDA headers (nvidia-cuda-runtime, root/include/cuda.h); a compiler without its headers is not used.
+    CuPy for CUDA 13 (cupy-cuda13x) must be installed on `paths` too: other software can bring these NVIDIA
+    packages, and CuPy for CUDA 12 must not get CUDA 13 headers."""
+    import glob
+    import os
+    paths = [p for p in paths if p and isinstance(p, str)]
+    if not any(glob.glob(os.path.join(glob.escape(p), PIP_CUPY_INFO)) for p in paths):
+        return None
+    for p in paths:
+        if not p or not isinstance(p, str):
+            continue
+        root = os.path.join(p, *PIP_CUDA_DIR)
+        if not os.path.isfile(os.path.join(root, "include", "cuda.h")):
+            continue
+        if windows:
+            for d in (os.path.join(root, "bin", "x86_64"), os.path.join(root, "bin")):
+                if os.path.isfile(os.path.join(d, ENV_NVRTC_DLL)):
+                    return root, d, os.path.join(d, ENV_NVRTC_DLL)
+        else:
+            d = os.path.join(root, "lib")
+            found = sorted(glob.glob(os.path.join(d, ENV_NVRTC_SO)), key=lambda q: (len(os.path.basename(q)), q))
+            if found:
+                return root, d, found[0]
+    return None
+
+
+def _use_env_cuda(environ=None, prefix=None, platform=None, modules=None, preload=None, machine=None, paths=None,
+                  add_dll=None, jetson=None):
     """-> a dict describing the decision (also stored in CUDA_PATH_NOTE): before (CUDA_PATH as found), set_to (the
     CUDA_PATH now in effect, or None), path_first (the folder put first on PATH, or None), why.  Never raises.
     The arguments exist for the tests; by default the real os.environ, sys.prefix, sys.platform, sys.modules, a
-    ctypes loader (Linux: the compiler is loaded with RTLD_GLOBAL) and platform.machine()."""
+    ctypes loader (Linux: the compiler is loaded with RTLD_GLOBAL), platform.machine(), sys.path (where the NVIDIA
+    pip packages are looked for), os.add_dll_directory (Windows) and whether this is a Jetson (JETSON_FILE)."""
     import os
     import sys
     environ = os.environ if environ is None else environ
     prefix = sys.prefix if prefix is None else prefix
     platform = sys.platform if platform is None else platform
     modules = sys.modules if modules is None else modules
+    paths = list(sys.path) if paths is None else paths
     note = {"before": environ.get("CUDA_PATH"), "set_to": None, "path_first": None, "why": ""}
     try:
         windows, linux = platform.startswith("win"), platform.startswith("linux")
@@ -69,7 +116,10 @@ def _use_env_cuda(environ=None, prefix=None, platform=None, modules=None, preloa
 
         if linux:
             so = _env_nvrtc_so(prefix, machine)
-            if so is None:
+            if jetson is None:
+                jetson = os.path.isfile(JETSON_FILE)
+            pip = None if (so is not None or jetson) else _pip_cuda(paths, False)
+            if so is None and pip is None:
                 note["why"] = ("this environment has no CUDA kernel compiler of its own (lib/%s): CuPy uses the "
                                "installed CUDA Toolkit" % ENV_NVRTC_SO)
                 return note
@@ -78,6 +128,14 @@ def _use_env_cuda(environ=None, prefix=None, platform=None, modules=None, preloa
 
                 def preload(p):
                     return ctypes.CDLL(p, mode=ctypes.RTLD_GLOBAL)
+            if pip is not None:                           # the NVIDIA pip packages (the `gpu` extra)
+                root, _lib_dir, so = pip
+                preload(so)
+                if not (note["before"] and same(note["before"], root)):
+                    environ["CUDA_PATH"] = root
+                note["set_to"] = root
+                note["why"] = "%s: %s and the headers" % (PIP_CUDA_NOTE, os.path.basename(so))
+                return note
             preload(so)                                   # CuPy's later load by name finds this copy
             if not (note["before"] and same(note["before"], prefix)):
                 environ["CUDA_PATH"] = prefix
@@ -86,9 +144,18 @@ def _use_env_cuda(environ=None, prefix=None, platform=None, modules=None, preloa
             return note
         lib = os.path.join(prefix, "Library")
         bin_dir = os.path.join(lib, "bin")
+        why = "the environment's own CUDA kernel compiler and headers"
         if not os.path.isfile(os.path.join(bin_dir, ENV_NVRTC_DLL)):
-            note["why"] = "this environment has no CUDA kernel compiler of its own (Library/bin/%s)" % ENV_NVRTC_DLL
-            return note
+            pip = _pip_cuda(paths, True)
+            if pip is None:
+                note["why"] = "this environment has no CUDA kernel compiler of its own (Library/bin/%s)" % ENV_NVRTC_DLL
+                return note
+            lib, bin_dir, _dll = pip                      # the NVIDIA pip packages (the `gpu` extra)
+            why = "%s: %s and the headers" % (PIP_CUDA_NOTE, ENV_NVRTC_DLL)
+            if add_dll is None:
+                add_dll = getattr(os, "add_dll_directory", None)
+            if add_dll is not None:                       # the compiler loads its helper DLL from this folder
+                _DLL_DIRS.append(add_dll(bin_dir))
         if not (note["before"] and same(note["before"], lib)):
             environ["CUDA_PATH"] = lib
         path = environ.get("PATH") or ""
@@ -97,7 +164,7 @@ def _use_env_cuda(environ=None, prefix=None, platform=None, modules=None, preloa
             environ["PATH"] = bin_dir + (os.pathsep + path if path else "")
         note["set_to"] = lib
         note["path_first"] = bin_dir
-        note["why"] = "the environment's own CUDA kernel compiler and headers"
+        note["why"] = why
     except Exception as e:                                # never stop an import over this step
         note["why"] = "skipped (%s: %s)" % (type(e).__name__, e)
     return note

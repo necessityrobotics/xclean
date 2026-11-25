@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.3.1 (2026-11-25): install with pip alone
+
+The SLAM engine is unchanged: no algorithm, parameter or GPU kernel changed. The changed files of the package are
+`__init__.py` (the version and the CUDA compiler step at import) and `doctor.py` (its messages and its toolkit check
+know the pip packages). Every other file of
+the package is byte-identical to 0.3.0. The provenance md5 of a run changes, because it covers every file of the
+package. In the conda environment, xclean behaves as in 0.3.0.
+
+- **`pip install "xstereo-slam[gpu]"`:** the package is published on PyPI as `xstereo-slam` (the name `xclean` there
+  belongs to another project). Python 3.10 to 3.13. The new `gpu` extra installs CuPy for CUDA 13 and the NVIDIA pip packages with the CUDA kernel
+  compiler (`nvidia-cuda-nvrtc` 13.3) and the CUDA header files (`nvidia-cuda-runtime` 13.3). No conda, no git and no
+  CUDA Toolkit is needed. For Windows and Linux (x86-64 and ARM64) PCs; not for Jetson, which keeps JetPack's CUDA.
+- **CUDA kernel compiler from pip:** when the environment has no conda compiler but has these NVIDIA pip packages,
+  `import xclean` sets `CUDA_PATH` to `<site-packages>/nvidia/cu13` for its own processes. On Windows it also puts
+  the compiler's folder first on `PATH` and registers it as a DLL folder; on Linux it loads `libnvrtc.so.13`. A
+  conda compiler in the environment has priority. `XCLEAN_KEEP_CUDA_PATH=1` turns the step off, as before. The pip
+  packages are used only beside `cupy-cuda13x`, and never on a Jetson.
+- **`constraints-tested.txt`:** the exact versions of our tests and published results, for
+  `pip install "xstereo-slam[gpu]" -c constraints-tested.txt`. Without it, pip takes the newest versions that xclean
+  allows. The file needs Python 3.11 or newer.
+- **`xclean doctor`:** it reports the pip packages as the compiler in use, and in a pip install its fix for a
+  version warning names the constraints file.
+- **Publishing:** a GitHub Actions workflow builds the package, tests the wheel and the source package, and uploads
+  to PyPI when a version tag is pushed (PyPI trusted publishing; no password or token is stored).
+- **Tests:** the rule for the pip packages (Windows and Linux layouts, the priority of a conda compiler, a compiler
+  without headers, CuPy for CUDA 12 or no CuPy, a Jetson, the opt-out), and a test in a real pip environment. The Linux workflow has a new job for the pip
+  route on x86-64 and ARM64: it installs the built wheel with the `gpu` extra, runs the test suite, and compiles
+  every GPU kernel with the pip compiler.
+- **Tested on our machine (Windows 11, RTX 5090, Python 3.12, the CUDA Toolkit hidden from xclean's processes):**
+  with the exact tested versions, `xclean doctor --full` has no FAIL, the test suite passes, and a lock-step run of
+  all 2912 frames of EuRoC V1_01_easy gives the same pose for every frame as 0.3.0 in the conda environment.
+- **Newest package versions (2026-11-25: NumPy 2.5.5, SciPy 1.18.1, Numba 0.68.1, llvmlite 0.50.0, opencv-python
+  5.1.0.95):** xclean
+  runs and the test suite passes, but the same EuRoC run gives the same pose only for the first 341 frames. After
+  that the positions differ from 0.3.0 by at most 3.0 cm (median 0.7 cm) on a path of 58 m. Against the EuRoC
+  ground truth, the position error (ATE) of this one run is 3.65 cm with the newest versions and 3.74 cm with the
+  exact tested versions. For results that match ours, use the constraints file or the conda environment.
+- **Not tested:** the pip install on a machine that never had a CUDA Toolkit; the pip install on a Linux GPU.
+
 ## 0.3.0 (2026-11-13): any stereo rig, live
 
 The SLAM engine is unchanged: no algorithm, parameter or GPU kernel changed. The changed files are `__init__.py`

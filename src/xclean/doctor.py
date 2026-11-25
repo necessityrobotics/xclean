@@ -48,6 +48,11 @@ MIN_FREE_VRAM_GB = 2.0               # the engine's GPU memory budget, context i
 MATCHED_OPENBLAS_CORE = "skylakex"   # the OpenBLAS CPU kernel the GPU front end's 3x3 solver matches bit for bit
 FIX_ENV = "recreate the environment from environment.yml (conda env remove -n xclean, then conda env create -f " \
           "environment.yml)"
+# a pip install (0.3.1), not a conda environment; the constraints file needs Python 3.11 or newer and is not for Jetson
+if (not os.path.isdir(os.path.join(sys.prefix, "conda-meta")) and sys.version_info >= (3, 11)
+        and not os.path.isfile("/etc/nv_tegra_release")):
+    FIX_ENV = ("install the tested versions: add -c constraints-tested.txt to the pip command (the file is in the xclean "
+               "repository; see README, \"Install with pip\"), or use the conda environment.yml")
 if not sys.platform.startswith("win"):
     FIX_ENV += "; a Jetson venv takes its versions from pip and JetPack (docs/LINUX_JETSON.md)"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -577,6 +582,17 @@ def check_cupy(cp=None, cp_err=None, gpu_ok=True):
     return out, facts
 
 
+def _pip_cuda_present():
+    """The NVIDIA pip packages (compiler and headers, beside cupy-cuda13x) are in this environment, and this is not
+    a Jetson: xclean uses them when it is imported before CuPy (xclean/__init__.py)."""
+    if os.path.isfile("/etc/nv_tegra_release"):
+        return False
+    try:
+        return _import("xclean")._pip_cuda(sys.path, sys.platform.startswith("win")) is not None
+    except Exception:
+        return False
+
+
 def check_toolkit(facts, note=None, gpu_ok=True):
     """System CUDA Toolkit visibility, what xclean's CUDA step did (xclean/__init__.py), and whether the CUDA compiler
     and headers come from this environment (self-contained) or from elsewhere."""
@@ -601,6 +617,12 @@ def check_toolkit(facts, note=None, gpu_ok=True):
         except Exception:
             env_nvrtc = False
         how = "points CUDA_PATH at this environment and loads its own CUDA compiler"
+    pip_cuda = "NVIDIA pip packages" in (note.get("why") or "")       # the pip-only install (the `gpu` extra, 0.3.1)
+    if not env_nvrtc and not pip_cuda:                   # present but not in use (e.g. CuPy was imported first)
+        pip_cuda = _pip_cuda_present()
+    if pip_cuda:
+        env_nvrtc = True
+        how = "uses the NVIDIA pip packages of this environment (compiler and headers)"
     if note.get("set_to"):
         used = "not used: xclean %s, in xclean's own processes only" % how
     elif sys_tk:

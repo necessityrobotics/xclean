@@ -1,0 +1,72 @@
+# Publish the Python package to PyPI. It runs only when a version tag (v*) is pushed, or when it is started by hand on
+# a version tag. A push to a branch never starts it, and a start by hand on a branch stops at the version check.
+# It uses PyPI "trusted publishing": no password and no token is stored in this repository. Before the first run, the
+# PyPI account that will manage the project must add a "pending publisher" on pypi.org:
+#   project name xstereo-slam, owner necessityrobotics, repository xclean, workflow publish.yml, environment pypi.
+# The build job tests the wheel (with the gpu extra: the whole test suite, and every GPU kernel compiled with the pip
+# compiler) and the source package before anything is uploaded.
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build the package and test it
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The run must be on a version tag, and the tag must be the version of the package
+        run: |
+          v=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          w=$(grep -m1 '^__version__ = ' src/xclean/__init__.py | cut -d'"' -f2)
+          tag="${{ github.ref_name }}"
+          echo "pyproject version $v, module version $w, ref ${{ github.ref }}"
+          test "${{ github.ref_type }}" = "tag"
+          test "v$v" = "$tag"
+          test "$v" = "$w"
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+          ls -l dist
+      - name: Wheel with the gpu extra, in a clean environment (the whole test suite, the pip compiler)
+        env:
+          XCLEAN_REQUIRE_NVRTC: "1"
+        run: |
+          python -m venv /tmp/t_wheel
+          /tmp/t_wheel/bin/pip install "$(ls dist/*.whl)[gpu]" pytest
+          (cd /tmp && env -u CUDA_PATH /tmp/t_wheel/bin/python -c "import xclean; n = xclean.CUDA_PATH_NOTE; print(xclean.__file__, xclean.__version__, n); assert 'site-packages' in xclean.__file__ and 'NVIDIA pip packages' in n['why']")
+          /tmp/t_wheel/bin/python -m pytest -q -rfEs --tb=short -p no:faulthandler
+      - name: Source package, in a second clean environment
+        run: |
+          python -m venv /tmp/t_sdist
+          /tmp/t_sdist/bin/pip install dist/*.tar.gz
+          cd /tmp && /tmp/t_sdist/bin/xclean --help > /dev/null
+          /tmp/t_sdist/bin/python -c "import os, xclean, xclean.loop; d = os.path.join(os.path.dirname(xclean.loop.__file__), 'vocab'); print(xclean.__version__, sorted(os.listdir(d))); assert any(f.endswith('.npz') for f in os.listdir(d))"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Upload to PyPI
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

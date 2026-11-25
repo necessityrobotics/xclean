@@ -7,6 +7,7 @@ USB stereo camera, two USB cameras, or your own source for any camera SDK (see
 [docs/ANY_STEREO_LIVE.md](docs/ANY_STEREO_LIVE.md)). We tested live runs only on the OAK-D-Lite.
 From 0.2.0 it also installs on Linux (x86-64 and ARM64), including NVIDIA Jetson Orin and Jetson Thor robot computers:
 see [docs/LINUX_JETSON.md](docs/LINUX_JETSON.md). We have not run it on Linux or Jetson hardware ourselves.
+From 0.3.1 it installs with pip alone, without conda: `pip install "xstereo-slam[gpu]"` (see [Install](#install)).
 
 ## What it does
 - On the GPU: feature detection, ORB descriptors, stereo matching, and the first feature-matching step of each frame.
@@ -57,13 +58,98 @@ was done: <https://necessityrobotics.github.io/paper.html>.
   (CUDA 12.6) works with CuPy for CUDA 12 instead. We tested an RTX 5090 with driver 616.92. `xclean doctor` checks
   the driver and the GPU (compute capability 7.5 or newer with CUDA 13), and warns when less than 2 GB of GPU memory
   is free.
-- conda (Miniconda, Anaconda or Miniforge), and git to get the code. On Jetson, a Python venv on top of JetPack works
-  too.
+- For the pip install: Python 3.10 to 3.13 (we test 3.12). For the conda install: conda (Miniconda, Anaconda or
+  Miniforge), and git to get the code. On Jetson, a Python venv on top of JetPack works too.
 - For live use: a calibrated stereo rig. The Luxonis OAK-D-Lite is built in and is the only camera we tested live.
   Other rigs connect through `--source` ([docs/ANY_STEREO_LIVE.md](docs/ANY_STEREO_LIVE.md)); we tested that path
   with recordings and simulated cameras.
 
 ## Install
+
+There are two ways to install xclean on a PC with an NVIDIA GPU. For NVIDIA Jetson, follow
+[docs/LINUX_JETSON.md](docs/LINUX_JETSON.md).
+
+| Route | Use it when |
+|---|---|
+| [pip](#install-with-pip) (from 0.3.1) | You want the shortest install. It needs only Python. |
+| [conda](#install-with-conda) | You want the environment of our published results, with every version fixed, and the repository with its tests. |
+
+### Install with pip
+
+You need Python 3.10 to 3.13 (we test 3.12). You need no conda, no git and no CUDA Toolkit. Use a new virtual
+environment. On Windows, use Command Prompt (if `python` is not found or is not version 3.10 to 3.13, use
+`py -3.12` in its place):
+
+```
+python -m venv xclean-env
+```
+
+```
+xclean-env\Scripts\activate
+```
+
+In PowerShell, the second command is `xclean-env\Scripts\Activate.ps1`. If PowerShell says that running scripts is
+disabled, use Command Prompt.
+
+On Linux (x86-64 or ARM64; not Jetson):
+
+```
+python3 -m venv xclean-env
+```
+
+```
+source xclean-env/bin/activate
+```
+
+Then, on both:
+
+```
+pip install "xstereo-slam[gpu]"
+```
+
+```
+xclean doctor
+```
+
+- The Python package is named `xstereo-slam`. It installs the `xclean` command and the `xclean` module. (The name
+  `xclean` on PyPI belongs to another project.)
+- The `gpu` extra installs, from PyPI: CuPy for CUDA 13 (`cupy-cuda13x`), the CUDA kernel compiler
+  (`nvidia-cuda-nvrtc` 13.3) and the CUDA header files (`nvidia-cuda-runtime` 13.3).
+- When `xclean` is imported, it points `CUDA_PATH` at these packages, for its own processes only. It does this also
+  when a CUDA Toolkit is installed. `XCLEAN_KEEP_CUDA_PATH=1` turns this off. xclean uses these NVIDIA packages
+  only when `cupy-cuda13x` is installed beside them, and never on a Jetson.
+- `xclean doctor` checks the machine and prints a fix for each problem. `xclean doctor --full` also runs the self-test
+  of the GPU front end.
+- On Windows, pip downloads about 220 MB, and the environment takes about 660 MB of disk.
+- For a Luxonis OAK camera, add the `oak` extra: `pip install "xstereo-slam[gpu,oak]"`.
+- The guides are in this repository: [QUICKSTART](QUICKSTART.md) (from step 3, "Check the machine", on),
+  [docs/OWN_DATA.md](docs/OWN_DATA.md) and [docs/ANY_STEREO_LIVE.md](docs/ANY_STEREO_LIVE.md).
+- Do not use the `gpu` extra on a Jetson: use JetPack's own CUDA there ([docs/LINUX_JETSON.md](docs/LINUX_JETSON.md)).
+
+**The exact tested versions.** pip takes the newest NumPy, SciPy, Numba and OpenCV that xclean allows. Our published
+results were made with fixed versions. To install exactly those versions, add the constraints file of this repository.
+The constraints file needs Python 3.11 or newer (3.12 is the tested Python):
+
+```
+pip install "xstereo-slam[gpu]" -c https://raw.githubusercontent.com/necessityrobotics/xclean/v0.3.1/constraints-tested.txt
+```
+
+What we measured with the pip install on our machine (Windows 11, RTX 5090, Python 3.12), with the CUDA Toolkit of the
+machine hidden from xclean's processes. The run is EuRoC V1_01_easy, all 2912 frames, lock-step, compared with
+xclean 0.3.0 in the conda environment:
+
+| pip install | `xclean doctor --full` | Test suite | Poses against 0.3.0 (conda) |
+|---|---|---|---|
+| Exact tested versions (constraints file) | no FAIL; one warning (depthai is not installed) | passes | The same pose for every frame. |
+| Newest versions on 2026-11-25 (NumPy 2.5.5, SciPy 1.18.1, Numba 0.68.1, llvmlite 0.50.0, opencv-python 5.1.0.95) | no FAIL; one warning for each package that is not the tested version | passes | The same pose for the first 341 frames. After that the positions differ: at most 3.0 cm, median 0.7 cm, on a path of 58 m. |
+
+- With the newest versions xclean runs, but it does not repeat our results digit for digit. Against the EuRoC ground
+  truth, the position error (ATE, `xclean score`) of this one run is 3.65 cm with the newest versions and 3.74 cm
+  with the exact tested versions. That is one sequence, not a test of accuracy with other versions.
+- To compare your results with ours, use the exact tested versions.
+- We have not tested the pip install on a machine that never had a CUDA Toolkit, and not on a Linux GPU.
+
+### Install with conda
 
 These steps are for Windows. For Linux and NVIDIA Jetson, follow [docs/LINUX_JETSON.md](docs/LINUX_JETSON.md).
 
@@ -112,7 +198,7 @@ xclean doctor
 - Run xclean in a terminal where the environment is activated (`conda activate xclean`).
 - `xclean doctor` checks the machine and prints a fix for each problem. See the [QUICKSTART](QUICKSTART.md).
 
-No CUDA Toolkit is needed. The environment carries the CUDA kernel compiler (NVRTC) and the CUDA header files xclean
+No CUDA Toolkit is needed. The conda environment carries the CUDA kernel compiler (NVRTC) and the CUDA header files xclean
 uses, and the CUDA runtime is built into CuPy. We tested this with the CUDA Toolkit installed on our machine hidden
 from xclean's processes: `xclean doctor --full` and the GPU tests passed, no file of the toolkit was loaded, and a
 whole EuRoC run gave the same trajectory as with the toolkit visible. We have not tested a machine that never had a
@@ -122,7 +208,9 @@ If a CUDA Toolkit is installed, xclean still uses the environment's own compiler
 for its own processes only. `XCLEAN_KEEP_CUDA_PATH=1` turns this off. The environment holds only the CUDA parts
 xclean uses: it has no cuBLAS, cuFFT, cuRAND or cuSOLVER, so CuPy functions that need them do not work in it.
 
-Check the install without a GPU or a dataset (about a minute on our machine):
+Check the install without a GPU or a dataset (about a minute on our machine). The tests are in the repository, so
+with the pip install, get the repository at the version you installed first
+(`git clone --branch v0.3.1 https://github.com/necessityrobotics/xclean`, then `cd xclean`):
 
 ```
 pip install pytest
@@ -187,6 +275,9 @@ CPU front end, bit for bit.
   the same pose for every frame as `xclean replay` and `xclean live --replay` (lock-step, also on a whole EuRoC
   sequence with the IMU in use). `uvc-pair` cameras are not synchronised. Reports with the output of
   `xclean doctor --source` are welcome.
+- pip install (0.3.1): tested on our one Windows machine, with the CUDA Toolkit hidden. With the newest package
+  versions the poses are not the same as ours (see [Install with pip](#install-with-pip)). On Linux it is tested
+  in CI without a GPU only.
 - Linux and NVIDIA Jetson (0.2.0): installed and tested in CI on GitHub's Linux machines (x86-64 and ARM64, no GPU):
   the test suite passes and every GPU kernel compiles for the supported GPUs, including Jetson Orin (sm_87) and Jetson
   Thor (sm_110). No xclean run on a Linux or Jetson GPU has been made by us, so accuracy and speed there are

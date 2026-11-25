@@ -24,14 +24,58 @@ If something fails, open an issue at <https://github.com/necessityrobotics/xclea
 
 | Machine | CUDA | Route |
 |---|---|---|
-| Linux PC, workstation or server (x86-64), NVIDIA GPU Turing (RTX 20) or newer | driver R580 or newer (CUDA 13) | A |
-| ARM64 server or workstation with an NVIDIA GPU (SBSA) | CUDA 13 driver | A |
+| Linux PC, workstation or server (x86-64), NVIDIA GPU Turing (RTX 20) or newer | driver R580 or newer (CUDA 13) | P or A |
+| ARM64 server or workstation with an NVIDIA GPU (SBSA) | CUDA 13 driver | P or A |
 | Jetson AGX Thor, T5000, T4000 (JetPack 7) | CUDA 13 | B, CUDA 13 |
 | Jetson Orin family on JetPack 7.2 | CUDA 13 | B, CUDA 13 |
 | Jetson Orin family on JetPack 6 | CUDA 12.6 | B, CUDA 12 |
 | Jetson Xavier, Jetson Nano (JetPack 5 or 4) | CUDA 11 or older | not supported |
 
 Check the JetPack release on a Jetson with `cat /etc/nv_tegra_release` (R36 = JetPack 6, R38 or newer = JetPack 7).
+
+## Route P: pip only (Linux x86-64 or ARM64, CUDA 13 driver)
+
+From 0.3.1. You need Python 3.10 to 3.13 (we test 3.12) and an NVIDIA driver that supports CUDA 13. You need no conda,
+no git and no CUDA Toolkit. Do not use this route on a Jetson: use route B there.
+
+```bash
+python3 -m venv ~/xclean-venv
+```
+
+```bash
+source ~/xclean-venv/bin/activate
+```
+
+```bash
+pip install -U pip
+```
+
+```bash
+pip install "xstereo-slam[gpu]"
+```
+
+```bash
+xclean doctor
+```
+
+- The `gpu` extra installs CuPy for CUDA 13, the CUDA kernel compiler (`nvidia-cuda-nvrtc` 13.3) and the CUDA header
+  files (`nvidia-cuda-runtime` 13.3) from PyPI.
+- When `xclean` is imported, it sets `CUDA_PATH` to `<site-packages>/nvidia/cu13` and loads
+  `<site-packages>/nvidia/cu13/lib/libnvrtc.so.13`, in its own processes only. It does this also when a CUDA Toolkit
+  is installed. `XCLEAN_KEEP_CUDA_PATH=1` turns this off.
+- pip takes the newest NumPy, SciPy, Numba and OpenCV that xclean allows. For the exact versions of our published
+  results, add the constraints file. It needs Python 3.11 or newer (3.12 is the tested Python):
+
+  ```bash
+  pip install "xstereo-slam[gpu]" -c https://raw.githubusercontent.com/necessityrobotics/xclean/v0.3.1/constraints-tested.txt
+  ```
+
+- The guides and the tests are in the repository. To run the tests:
+  `git clone --branch v0.3.1 https://github.com/necessityrobotics/xclean`, `cd xclean`, `pip install pytest`,
+  `pytest`.
+- xclean uses the NVIDIA pip packages only when `cupy-cuda13x` is installed beside them. On a Jetson it never uses
+  them: JetPack's CUDA stays in charge there.
+- Route A (conda) stays the route of our published results: it fixes every version, the Python version included.
 
 ## Route A: conda (Linux x86-64 or ARM64, CUDA 13 driver)
 

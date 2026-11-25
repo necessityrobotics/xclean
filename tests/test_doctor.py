@@ -253,6 +253,7 @@ def test_toolkit_and_self_contained(monkeypatch, tmp_path):
     env, tk = tmp_path / "env", tmp_path / "toolkit"
     monkeypatch.setattr(D.sys, "prefix", str(env))
     monkeypatch.setattr(D.shutil, "which", lambda name: None)
+    monkeypatch.setattr(D, "_pip_cuda_present", lambda: False)      # not the NVIDIA pip packages of the test machine
     inside = str(env / "Library" / "bin" / "nvrtc64_130_0.dll")
     outside = str(tk / "bin" / "x64" / "nvrtc64_130_0.dll")
     hdr_in = (str(env / "Lib" / "site-packages" / "nvidia" / "cu13" / "include"), "nvidia-cuda-runtime package")
@@ -367,3 +368,28 @@ def test_full_without_gpu(monkeypatch):
     _quiet_machine(monkeypatch)
     names = [c.name for c in D.run_checks(full=True)]
     assert "GPU front end" in names
+
+
+def test_toolkit_check_names_the_nvidia_pip_packages(tmp_path, monkeypatch):
+    """The pip-only install (0.3.1): the toolkit of the machine is reported as not used, and the environment counts
+    as one with its own CUDA compiler."""
+    monkeypatch.setattr(D.shutil, "which", lambda name: None)       # no nvcc of the test machine
+    monkeypatch.setattr(D.sys, "prefix", str(tmp_path / "venv"))    # an environment without a conda compiler
+    note = {"before": str(tmp_path / "toolkit"), "set_to": str(tmp_path / "site" / "nvidia" / "cu13"),
+            "path_first": None, "why": "the NVIDIA pip packages of this environment (nvidia-cuda-nvrtc, "
+                                       "nvidia-cuda-runtime): libnvrtc.so.13 and the headers"}
+    first = D.check_toolkit({"packaging": None}, note)[0]
+    assert first.name == "System CUDA Toolkit" and "not used" in first.detail and "NVIDIA pip packages" in first.detail
+    none = D.check_toolkit({"packaging": None}, dict(note, before=None))[0]
+    assert "none visible" in none.detail and "its own CUDA compiler" in none.detail
+    # the pip packages are present but CuPy was imported before xclean: a warning, with the fix
+    tk = tmp_path / "toolkit"
+    facts = {"packaging": "pip", "cuda_path": str(tk), "nvrtc": (13, 3), "headers": [(str(tk / "include"), "CUDA path")],
+             "loaded": {"nvrtc": [str(tk / "bin" / "nvrtc64_130_0.dll")]}}
+    early = {"before": str(tk), "set_to": None, "why": "CuPy was already imported before xclean"}
+    monkeypatch.setattr(D, "_pip_cuda_present", lambda: True)
+    warn = [c for c in D.check_toolkit(facts, early) if c.name == "Self-contained"][0]
+    assert warn.status == D.WARN and "before CuPy" in warn.fix
+    monkeypatch.setattr(D, "_pip_cuda_present", lambda: False)
+    plain = [c for c in D.check_toolkit(facts, early) if c.name == "Self-contained"][0]
+    assert plain.status == D.OK

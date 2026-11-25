@@ -5,16 +5,20 @@ build-backend = "setuptools.build_meta"
 [project]
 # The Python package (distribution) is xstereo-slam; it installs the import package xclean and the xclean command.
 name = "xstereo-slam"
-version = "0.3.0"
+version = "0.3.1"
 description = "Real-time stereo visual-inertial SLAM in Python (CuPy + Numba): no C++ build step, no ROS"
-readme = "README.md"
+readme = "PYPI_README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE", "THIRD_PARTY.md"]
 authors = [{ name = "Necessity Robotics" }]
-requires-python = ">=3.10"
+# CuPy 13.6, which every GPU extra installs, has wheels for Python 3.10 to 3.13.
+requires-python = ">=3.10,<3.14"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: Microsoft :: Windows :: Windows 11",
     "Operating System :: POSIX :: Linux",
     "Environment :: GPU :: NVIDIA CUDA",
@@ -42,6 +46,11 @@ Source = "https://github.com/necessityrobotics/xclean"
 # CuPy is required to run the engine on the GPU, but its wheel name depends on your CUDA version, so it is an extra.
 # With the conda environment.yml, CuPy is already installed with pip from PyPI (the cupy-cuda13x wheel): do NOT add one
 # of these extras there.
+# gpu: the pip-only install for a PC with an NVIDIA GPU (0.3.1). CuPy for CUDA 13, plus the NVIDIA pip packages with the
+# CUDA kernel compiler (NVRTC) and the CUDA headers, in the version of our tests (13.3). No conda and no CUDA Toolkit
+# is needed. Not for Jetson: use cuda13 or cuda12 there, with JetPack's CUDA.
+# xclean uses these NVIDIA packages only beside cupy-cuda13x, and never on a Jetson.
+gpu = ["cupy-cuda13x>=13.6,<14", "nvidia-cuda-nvrtc==13.3.*", "nvidia-cuda-runtime==13.3.*"]
 cuda13 = ["cupy-cuda13x>=13.6,<14"]
 cuda12 = ["cupy-cuda12x>=13.6,<14"]  # CUDA 12, e.g. Jetson Orin on JetPack 6
 oak = ["depthai>=3.3"]

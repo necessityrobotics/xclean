@@ -1,0 +1,19 @@
+# xclean: the exact versions of our tests and of our published results (the same pins as environment.yml).
+# Use it with the pip-only install, so that pip takes these versions and not the newest ones:
+#
+#   pip install "xstereo-slam[gpu]" -c constraints-tested.txt
+#   pip install "xstereo-slam[gpu]" -c https://raw.githubusercontent.com/necessityrobotics/xclean/v0.3.1/constraints-tested.txt
+#
+# The file needs Python 3.11 or newer; Python 3.12 is the tested Python. With other versions of these packages xclean runs, but it does not repeat our
+# results digit for digit (README, "Install with pip", has the measured difference), and `xclean doctor` prints a
+# warning for each package that is not the tested version.
+numpy==2.3.5
+scipy==1.16.3
+numba==0.63.1
+llvmlite==0.46.0
+opencv-python==5.0.0.93
+cupy-cuda13x==13.6.0
+nvidia-cuda-nvrtc==13.3.33
+nvidia-cuda-runtime==13.3.29
+psutil==7.2.2
+depthai==3.3.0

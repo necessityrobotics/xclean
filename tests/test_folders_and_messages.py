@@ -540,7 +540,8 @@ def _published_text_files():
                 if fn.endswith((".py", ".md", ".json")):
                     yield os.path.join(dp, fn)
     for fn in ("README.md", "QUICKSTART.md", "NOTICE", "THIRD_PARTY.md", "USERS.md", "environment.yml",
-               "pyproject.toml", ".gitignore", ".gitattributes"):
+               "pyproject.toml", ".gitignore", ".gitattributes", "PYPI_README.md", "constraints-tested.txt",
+               "CHANGELOG.md"):
         if os.path.isfile(os.path.join(REPO, fn)):
             yield os.path.join(REPO, fn)
 
